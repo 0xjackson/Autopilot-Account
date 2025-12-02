@@ -12,8 +12,8 @@ All of this happens inside a 4337 smart account using a custom ERC-7579 module, 
 
 | Concept | Description |
 |---------|-------------|
-| **Smart Account (4337)** | Contract wallet on Base with custom logic and gasless transactions via paymaster |
-| **Factory** | Deploys new smart accounts and installs the AutoYield module |
+| **Smart Account (4337)** | ZeroDev Kernel v3 wallet on Base with custom logic and gasless transactions via paymaster |
+| **AutopilotFactory** | Deploys Kernel accounts via the ZeroDev Kernel Factory with AutoYieldModule pre-installed |
 | **AutoYieldModule (7579)** | Pluggable "brain" that manages thresholds, strategies, and dust config |
 | **YieldAdapter** | Talks to yield sources (ERC-4626 vaults, LP routers) |
 | **Paymaster** | Sponsors gas so users never need ETH |
@@ -67,7 +67,7 @@ Click "Clean Up Wallet" to:
          │
          ▼
 ┌────────────────────────┐
-│    AutoYieldAccount    │
+│    Kernel Account      │
 │  (4337 smart account)  │
 └────────┬───────────────┘
          │
@@ -104,16 +104,14 @@ forge test
 ├── frontend/          Next.js app with Wagmi + OnchainKit
 ├── contracts/         Foundry project
 │   ├── src/
-│   │   ├── AutoYieldAccount.sol
-│   │   ├── AutoYieldAccountFactory.sol
-│   │   ├── AutoYieldModule.sol
-│   │   ├── AutoYieldPaymaster.sol
-│   │   ├── adapters/
-│   │   │   ├── IYieldAdapter.sol
-│   │   │   └── VaultAdapter.sol
+│   │   ├── AutopilotFactory.sol      # Deploys Kernel accounts via ZeroDev factory
+│   │   ├── AutoYieldModule.sol       # ERC-7579 executor module
+│   │   ├── interfaces/
+│   │   │   ├── IKernel.sol           # Kernel v3 + Factory interfaces
+│   │   │   ├── IERC7579Module.sol    # Module interface definitions
+│   │   │   └── IYieldAdapter.sol     # Yield adapter interface
 │   │   └── mocks/
-│   │       ├── MockYieldVault.sol
-│   │       └── MockDexRouter.sol
+│   │       └── MockYieldVault.sol    # Test vault with ERC-4626 interface
 │   └── test/
 ├── CLAUDE.md          Architecture constraints
 └── hackathon-prd.md   Full product requirements
