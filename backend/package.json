@@ -17,6 +17,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@moonwell-fi/moonwell-sdk": "^0.9.13",
+    "axios": "^1.13.2",
     "express": "^4.18.2"
   },
   "devDependencies": {

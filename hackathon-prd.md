@@ -1,690 +1,1575 @@
-# PRD: AutoYield Smart Wallet on Base
+# PRD: Autopilot Wallet on Base
 
-**Working name:** Autopilot Wallet (we can rename later)
+**Working name:** Autopilot Wallet
+
+---
 
 ## 0. One-Sentence Idea
 
-A smart wallet on Base that automatically:
-- Keeps a "checking" balance in USDC (and optionally a few other tokens)
-- Routes excess into yield strategies (vaults or LPs)
-- Automatically frees funds from yield when you spend
-- Periodically / on-demand sweeps dust from random tokens into a token of your choice (e.g. USDC) so that can also be auto-yielded
-
-All of this happens inside a 4337 smart account using a custom ERC-7579 module, with gasless UX via a paymaster.
+A smart wallet on Base that automatically optimizes your idle capital — keeping a spending balance in USDC while a backend service continuously moves excess funds to the highest-yielding vaults, all without requiring user clicks or signatures after initial setup.
 
 ---
 
-## 1. Goals & Non-Goals
+## 1. The Problem We're Solving
 
-### 1.1 Goals
+**Current DeFi UX is broken:**
 
-**Make a wallet where:**
+1. **Manual yield management** — Users must constantly monitor APYs, manually deposit into vaults, and withdraw when they need to spend. Most people don't bother.
 
-- Users think in one simple mental model: *"I set my checking buffer. Everything else goes to work."*
-- Users never have to manually:
-  - Move funds into yield vaults
-  - Move funds out of yield to pay someone
-  - Clean up dust / airdrop trash across 10 tokens
+2. **Fragmented balances** — Funds sit idle in wallets earning nothing. Users accumulate dust tokens from airdrops and swaps that are too small to be worth managing.
 
-**Showcase:**
-- ERC-4337 UX (gasless, batching, smart account)
-- ERC-7579 module (policy + execution brain)
-- Base as the chain
-- USDC as primary asset
-- Optional: LP-style strategies to show composability
+3. **Gas friction** — Every DeFi interaction requires ETH for gas and a signature. This creates cognitive overhead and discourages optimization.
 
-**Be fully demoable in a hackathon:**
-- Base Sepolia deployment
-- Clear UI
-- Live payment + auto-rebalance + dust sweep demo
+4. **Yield vs. liquidity tradeoff** — If your funds are in a vault earning yield, you can't instantly spend them. Users choose between earning yield OR having liquid funds.
 
-### 1.2 Non-Goals (for v1 / hackathon scope)
+**Autopilot Wallet solves all of this:**
 
-- No fully generic yield aggregator over the entire DeFi universe — we will support a small curated set of strategies
-- No auto-yield for every random token — we'll support:
-  - USDC for sure
-  - Optionally a couple of others (e.g. WETH) if time
-- No off-chain cron infra required for v1 "automation" — automation is primarily triggered when the user uses the wallet or clicks a button
-- We do not custody user funds off-chain or via a backend — all logic runs on-chain in the smart account + modules
+- Set your "checking threshold" once (e.g., "keep 100 USDC liquid")
+- Everything above that threshold automatically earns the best available yield
+- When you spend, the wallet invisibly withdraws from yield to cover the transaction
+- A background service continuously monitors yields and migrates your funds to better vaults
+- Dust tokens get swept into USDC and put to work
+- Zero gas costs, zero signatures after setup
+
+**The user's mental model:** "I deposited money. It earns yield. I can spend anytime. I never think about it again."
 
 ---
 
-## 2. Core Concepts (Plain English)
+## 2. Goals & Non-Goals
+
+### 2.1 Goals
+
+**Product Goals:**
+
+- Users set their checking threshold once and never manually manage yield again
+- Background automation finds and migrates to the best yields without user interaction
+- Spending from yield-bearing positions is invisible — one click, one signature, funds auto-unstake
+- Dust consolidation happens automatically
+- Completely gasless UX via paymaster
+
+**Technical Goals:**
+
+- Demonstrate ERC-4337 smart accounts with gasless UX
+- Showcase ERC-7579 modular architecture
+- Implement dual-key validation (owner key + automation key)
+- Build production-quality backend yield optimization service
+- Deploy on Base with real yield sources
+
+**Hackathon Demo:**
+
+- Full flow: deposit → auto-yield → spend (with invisible unstake) → re-yield
+- Background rebalancing triggered by yield changes
+- Dust sweep and compound
+- All gasless
+
+### 2.2 Non-Goals (v1 / Hackathon Scope)
+
+- No support for every DeFi protocol — we use a curated allowlist of safe vaults
+- No auto-yield for every token — USDC first, optionally WETH
+- No leveraged or complex strategies — simple vault deposits only
+- No cross-chain optimization
+- No mobile app — web dApp only
+- No fiat on/off-ramp integration (can be mocked)
+
+---
+
+## 3. Core Concepts
 
 | Concept | Description |
 |---------|-------------|
-| **Smart Account / 4337 Wallet** | A contract wallet on Base that can run custom logic when it sends transactions, and can be gasless via a paymaster |
-| **Factory** | A contract that deploys new smart accounts for users and installs our auto-yield logic |
-| **Module (ERC-7579)** | Pluggable "brain" for the wallet. Our module: knows user preferences (threshold, strategies, dust token), decides when to move tokens into or out of yield, can perform multi-call sequences (withdraw → pay → deposit) |
-| **Yield Strategy / Adapter** | A contract that knows how to talk to one specific yield source (e.g. an ERC-4626 vault, or an LP router) |
-| **Paymaster** | A contract that pays gas on behalf of the user's smart account, so the user doesn't need ETH |
-| **Dust Sweep** | A function that: looks at all tiny balances of random tokens in the account, swaps them into a chosen "consolidation" token (e.g. USDC), optionally auto-deposits that into the yield strategy |
+| **Smart Account (4337)** | A contract wallet that can execute complex logic, batch operations, and be gasless via paymaster. Uses ZeroDev Kernel v3. |
+| **Owner Key** | The user's EOA (MetaMask, Coinbase Wallet). Used for SIGNING only — proves identity. Does not hold user funds. |
+| **Automation Key (Session Key)** | A backend-controlled key with strict limits. Can ONLY call `rebalance()`, `migrateStrategy()`, and `sweepDustAndCompound()`. Cannot transfer funds out. Implemented as a session key with scoped permissions. |
+| **AutoYieldModule (7579)** | The brain of the wallet. Stores user config, executes yield logic, validates automation key permissions. |
+| **Checking Threshold** | Minimum balance to keep liquid (e.g., 100 USDC). Everything above goes to yield. |
+| **Yield Adapter** | A translation layer contract that converts our standard interface (`deposit`/`withdraw`/`totalValue`) to a specific protocol's interface (Aave, Morpho, etc.). Does NOT mock or replace real vaults — it connects to them. |
+| **Backend Optimizer** | Cron service that monitors yields, compares to user positions, and submits rebalance operations. |
+| **Paymaster** | Sponsors gas for all wallet operations. User never needs ETH. |
 
 ---
 
-## 3. User Flows (High-Level)
+## 3.1 Critical Architecture Clarification: EOA vs Smart Wallet
 
-### 3.1 Onboarding / Wallet Creation
+**The smart wallet holds all funds. The EOA is only used for signing.**
 
-1. User goes to our dApp (e.g. app.autopilotwallet.xyz)
-2. Connects their normal EOA wallet (Coinbase Wallet / MetaMask)
-3. Clicks "Create Autopilot Wallet on Base"
-4. Signs one message
-5. A new 4337 smart wallet is deployed on Base with:
-   - Their EOA as the owner / validator
-   - Our AutoYield module installed
-   - Default settings (e.g. checking threshold = 50 USDC, no strategies enabled yet)
-6. The user now has a new wallet address (the smart account) that they can send funds to
+This is a key concept that can be confusing:
 
-### 3.2 Funding Wallet
-
-1. User sends USDC (or other supported tokens) to their smart wallet address:
-   - From a CEX
-   - From an existing wallet
-   - Optional: via Circle/Coinbase onramp
-2. The funds arrive directly in the smart account contract
-3. At this point, no auto-yield yet — just a normal smart account with tokens
-
-### 3.3 Configure Auto-Yield
-
-1. User opens "Settings" screen
-2. Sets a checking threshold, e.g.: "Keep at least 100 USDC in checking."
-3. Chooses which tokens to auto-yield:
-   - "Auto-yield USDC ✅"
-   - "Auto-yield WETH ❌", etc.
-4. Chooses dust consolidation token, e.g.: "Sweep dust into USDC"
-5. Frontend sends a userOp to:
-   - `AutoYieldModule.configureToken(token, adapter, params…)`
-   - `AutoYieldModule.setCheckingThreshold(threshold)`
-   - `AutoYieldModule.setDustConfig(consolidationToken, trackedTokens[])`
-6. These configs are stored on-chain in the module
-
-### 3.4 Make a Payment (Magic Moment)
-
-1. User goes to "Pay" screen
-2. Chooses: "Pay 20 USDC to 0xMerchant…"
-3. Clicks "Pay with AutoYield"
-4. Frontend builds a userOp that calls:
-
-```solidity
-AutoYieldModule.executeWithAutoYield(
-    token = USDC,
-    to    = merchant,
-    amount = 20,
-    data   = USDC.transfer(merchant, 20)
-)
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     USER'S WALLET SETUP                              │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   EOA (User's MetaMask / Coinbase Wallet)                           │
+│   ───────────────────────────────────────                           │
+│   Address: 0xUser123...                                              │
+│   Purpose: SIGNING ONLY (proves "I am the owner")                   │
+│   Holds: Nothing (or minimal ETH, but not needed with paymaster)    │
+│   Role: Signs UserOperations to authorize transactions              │
+│                                                                      │
+│                         │                                            │
+│                         │ signs transactions                         │
+│                         ▼                                            │
+│                                                                      │
+│   Smart Wallet (Autopilot Wallet - Kernel Account)                  │
+│   ────────────────────────────────────────────────                  │
+│   Address: 0xSmartWallet456...                                       │
+│   Purpose: HOLDS ALL USER FUNDS                                      │
+│   Holds: USDC, yield positions, dust tokens, everything             │
+│   Role: Executes transactions when owner's signature is valid       │
+│   Features: Gasless, batching, auto-yield, session keys             │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-5. Under the hood, in the module:
-   - Check if USDC balance >= 20 + checkingThreshold
-   - If not, withdraw from vault / remove some LP until it is
-   - Execute the actual payment: `USDC.transfer(merchant, 20)`
-   - After payment, if USDC balance > threshold: deposit the excess into yield (vault or LP)
+**Why not just use the EOA directly?**
 
-6. This all happens in a single userOp:
-   - Bundler posts it to EntryPoint
-   - EntryPoint calls our account
-   - Account calls the module
-   - Module calls vault/router, then merchant
+Because EOAs can't do the features we need:
 
-**To the user:** They saw one click, no gas popup, and their balances auto-rebalanced.
+| Feature | EOA (MetaMask) | Smart Wallet |
+|---------|----------------|--------------|
+| Hold funds | ✓ | ✓ |
+| Gasless transactions | ✗ | ✓ (paymaster) |
+| Auto-withdraw from yield when spending | ✗ | ✓ (module logic) |
+| Batch multiple actions in one tx | ✗ | ✓ |
+| Session keys for automation | ✗ | ✓ |
+| Social recovery | ✗ | ✓ |
 
-### 3.5 Dust Sweep
+**The EOA is like a signature/ID card. The smart wallet is like a bank account.**
 
-1. User clicks "Clean Up Wallet"
-2. User chooses in Settings:
-   - Consolidation token: e.g. USDC
-   - Which tokens to treat as dust sources: e.g. random airdrops, old LP tokens
-3. On "Clean Up Wallet", frontend builds a userOp that calls:
-
-```solidity
-AutoYieldModule.sweepDustAndCompound()
-```
-
-4. Module does:
-   - For each trackedToken:
-     - If balance > 0 and not the consolidation token:
-       - Swap entire balance to the consolidation token via router
-   - Then:
-     - If consolidation token is yield-enabled:
-       - Deposit into its strategy (vault/LP)
-   - All swaps + deposit happen in one transaction (multicall)
-
-**Result:** One token balance gets bigger (USDC), everything else tiny disappears, and that USDC is already working in yield.
+You don't keep cash in your signature. You use your signature to authorize transactions from your bank account.
 
 ---
 
-## 4. Architecture Overview
+## 3.2 What Are Yield Adapters? (Not Mocks)
 
-### 4.1 Component Diagram (Conceptual)
+**Adapters are translation layers, not mock vaults.**
+
+Real yield vaults (Aave, Morpho) are **already deployed on Base** by their respective teams. They hold billions in TVL. We don't create or mock them.
+
+What we create are **adapters** — small contracts that translate OUR standard interface to THEIR specific interface:
 
 ```
-                        ┌──────────────────────────┐
-                        │        Frontend          │
-                        │  (Next.js + OnchainKit)  │
-                        └─────────┬────────────────┘
-                                  │
-                      Build UserOperation (via OnchainKit / viem)
-                                  │
-                          ┌───────▼────────┐
-                          │    Bundler     │
-                          │  (Pimlico/etc.)│
-                          └───────┬────────┘
-                                  │
-                          ┌───────▼────────┐
-                          │   EntryPoint   │
-                          │  (4337 core)   │
-                          └───────┬────────┘
-                                  │
-                     ┌────────────▼────────────┐
-                     │    AutoYieldAccount     │
-                     │   (4337 smart account)  │
-                     └────────────┬────────────┘
-                                  │
-                   Route calls to modules (ERC-7579)
-                                  │
-           ┌──────────────────────┴──────────────────────┐
-           │                                             │
-┌──────────▼──────────┐                      ┌───────────▼───────────┐
-│   AutoYieldModule   │                      │    (Other modules)    │
-│  (Executor + Hooks) │                      │   (validators, etc.)  │
-└──────────┬──────────┘                      └───────────────────────┘
-           │
-           │ strategy calls
-           │
-┌──────────▼──────────┐        ┌──────────────────────┐
-│    YieldAdapter     │        │   Router / Vaults    │
-│ (per token strategy)│◄──────►│ (DEX, ERC4626, etc.) │
-└─────────────────────┘        └──────────────────────┘
+AutoYieldModule (our code)
+         │
+         │ Calls: adapter.deposit(USDC, 1000)
+         │        adapter.withdraw(USDC, 500)
+         │        adapter.totalValue(USDC, account)
+         │
+         ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                      ADAPTERS (our code)                     │
+    │                                                              │
+    │   ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+    │   │AaveV3Adapter│  │MorphoAdapter│  │ MockYieldVault      │ │
+    │   │             │  │             │  │ (for testing only)  │ │
+    │   │ Translates: │  │ Translates: │  │                     │ │
+    │   │ deposit() → │  │ deposit() → │  │ Fake vault we       │ │
+    │   │ aave.supply │  │ morpho.     │  │ control for demos   │ │
+    │   │             │  │ supply()    │  │                     │ │
+    │   └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘ │
+    └──────────┼────────────────┼────────────────────┼────────────┘
+               │                │                    │
+               ▼                ▼                    ▼
+         ┌──────────┐    ┌──────────┐         ┌──────────┐
+         │ Aave V3  │    │ Morpho   │         │ Mock     │
+         │ on Base  │    │ on Base  │         │ Contract │
+         │ (REAL)   │    │ (REAL)   │         │ (FAKE)   │
+         │ $2B+ TVL │    │ $1B+ TVL │         │ for demo │
+         └──────────┘    └──────────┘         └──────────┘
+```
 
-      ┌──────────────────────┐
-      │  AutoYieldPaymaster  │
-      │  (sponsors gas for   │
-      │  allowed operations) │
-      └──────────────────────┘
+**MockYieldVault** exists only for:
+- Development without needing testnet tokens
+- Hackathon demos where you want to instantly "simulate" yield accrual
+- Unit testing
+
+For production (and ideally the hackathon demo), you use real adapters pointing to real protocols.
+
+---
+
+## 4. System Architecture
+
+### 4.1 High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           AUTOPILOT WALLET SYSTEM                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   ┌─────────────────┐                    ┌─────────────────────────────┐    │
+│   │    Frontend     │                    │    Backend Optimizer        │    │
+│   │   (Next.js)     │                    │    (Node.js / Cron)         │    │
+│   │                 │                    │                             │    │
+│   │  • Wallet setup │                    │  ┌───────────────────────┐  │    │
+│   │  • View balance │                    │  │   Yield Indexer       │  │    │
+│   │  • Send/Pay     │                    │  │   • Poll DefiLlama    │  │    │
+│   │  • Config       │                    │  │   • Track best vaults │  │    │
+│   │                 │                    │  └───────────┬───────────┘  │    │
+│   └────────┬────────┘                    │              │              │    │
+│            │                             │  ┌───────────▼───────────┐  │    │
+│            │ User signs                  │  │  Rebalance Engine     │  │    │
+│            │ with Owner Key              │  │  • Compare positions  │  │    │
+│            │                             │  │  • Decide migrations  │  │    │
+│            │                             │  └───────────┬───────────┘  │    │
+│            │                             │              │              │    │
+│            │                             │  ┌───────────▼───────────┐  │    │
+│            │                             │  │  UserOp Submitter     │  │    │
+│            │                             │  │  • Build userOps      │  │    │
+│            │                             │  │  • Sign w/ Auto Key   │  │    │
+│            │                             │  │  • Submit to bundler  │  │    │
+│            │                             │  └───────────┬───────────┘  │    │
+│            │                             └──────────────┼──────────────┘    │
+│            │                                            │                   │
+│            │  (Owner Key: any operation)                │ (Automation Key:  │
+│            │                                            │  rebalance only)  │
+│            ▼                                            ▼                   │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                         Base Network                                 │   │
+│   │  ┌──────────────┐    ┌──────────────┐    ┌───────────────────────┐  │   │
+│   │  │   Bundler    │───▶│  EntryPoint  │───▶│   Kernel Account      │  │   │
+│   │  │  (ZeroDev)   │    │   (4337)     │    │   (User's Wallet)     │  │   │
+│   │  └──────────────┘    └──────────────┘    │                       │  │   │
+│   │                                          │  Installed Modules:   │  │   │
+│   │  ┌──────────────┐                        │  • ECDSA Validator    │  │   │
+│   │  │  Paymaster   │─ ─ ─ ─ sponsors ─ ─ ─ ▶│  • AutoYieldModule    │  │   │
+│   │  │   (Base)     │       gas              │                       │  │   │
+│   │  └──────────────┘                        └───────────┬───────────┘  │   │
+│   │                                                      │              │   │
+│   │                           ┌──────────────────────────┴───────┐      │   │
+│   │                           │        AutoYieldModule           │      │   │
+│   │                           │                                  │      │   │
+│   │                           │  Storage:                        │      │   │
+│   │                           │  • checkingThreshold[token]      │      │   │
+│   │                           │  • currentAdapter[token]         │      │   │
+│   │                           │  • automationKey                 │      │   │
+│   │                           │  • allowedAdapters[]             │      │   │
+│   │                           │  • dustConfig                    │      │   │
+│   │                           │                                  │      │   │
+│   │                           │  Functions:                      │      │   │
+│   │                           │  • executeWithAutoYield() [owner]│      │   │
+│   │                           │  • rebalance() [automation]      │      │   │
+│   │                           │  • migrateStrategy() [automation]│      │   │
+│   │                           │  • sweepDustAndCompound() [both] │      │   │
+│   │                           └──────────────┬───────────────────┘      │   │
+│   │                                          │                          │   │
+│   │                           ┌──────────────▼───────────────────┐      │   │
+│   │                           │       Yield Adapters             │      │   │
+│   │                           │  ┌─────────┐  ┌─────────┐        │      │   │
+│   │                           │  │ Aave    │  │ Morpho  │  ...   │      │   │
+│   │                           │  │ Adapter │  │ Adapter │        │      │   │
+│   │                           │  └────┬────┘  └────┬────┘        │      │   │
+│   │                           └───────┼────────────┼─────────────┘      │   │
+│   │                                   │            │                    │   │
+│   │                           ┌───────▼────┐ ┌─────▼──────┐             │   │
+│   │                           │ Aave Vault │ │Morpho Vault│             │   │
+│   │                           │  (ERC4626) │ │  (ERC4626) │             │   │
+│   │                           └────────────┘ └────────────┘             │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4.2 Dual-Key Validation Model (Session Keys)
+
+The automation key is implemented as a **Session Key** — a cryptographically restricted key that can only perform specific actions. This allows the backend to automate yield optimization without the user needing to approve each transaction, while ensuring the backend can never steal funds.
+
+**How Session Keys Work:**
+
+When the backend's session key is created, it's registered on-chain with explicit permissions:
+
+```
+Session Key Permissions (set once during wallet setup):
+───────────────────────────────────────────────────────
+✓ Can call: AutoYieldModule.rebalance()
+✓ Can call: AutoYieldModule.migrateStrategy()
+    BUT only to these adapters: [AaveAdapter, MorphoAdapter]
+✓ Can call: AutoYieldModule.sweepDustAndCompound()
+
+✗ Cannot call: transfer()
+✗ Cannot call: executeWithAutoYield()
+✗ Cannot call: any configuration functions
+✗ Cannot call: anything else
+```
+
+The smart wallet **enforces these rules on-chain**. Even if a hacker steals the session key, they can only call those specific functions.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    DUAL-KEY VALIDATION                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │                     OWNER KEY (User's EOA)                   │    │
+│  │                                                              │    │
+│  │  Permissions: FULL ACCESS                                    │    │
+│  │  • transfer() - send tokens anywhere                         │    │
+│  │  • executeWithAutoYield() - spend with auto-unstake          │    │
+│  │  • setCheckingThreshold() - configure thresholds             │    │
+│  │  • setAutomationKey() - authorize/revoke backend             │    │
+│  │  • addAllowedAdapter() - whitelist new vaults                │    │
+│  │  • rebalance() - manual rebalance                            │    │
+│  │  • sweepDustAndCompound() - manual dust sweep                │    │
+│  │  • flushToChecking() - emergency withdraw all from yield     │    │
+│  │                                                              │    │
+│  │  Signing: MetaMask/Coinbase Wallet popup, user approves      │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │              SESSION KEY (Backend Automation)                │    │
+│  │                                                              │    │
+│  │  Permissions: RESTRICTED (yield operations only)             │    │
+│  │  • rebalance() - deposit excess into yield                   │    │
+│  │  • migrateStrategy() - move funds between allowed vaults     │    │
+│  │  • sweepDustAndCompound() - consolidate dust                 │    │
+│  │                                                              │    │
+│  │  CANNOT DO:                                                  │    │
+│  │  ✗ transfer() - cannot send funds to external addresses      │    │
+│  │  ✗ executeWithAutoYield() - cannot initiate spends           │    │
+│  │  ✗ setCheckingThreshold() - cannot change user config        │    │
+│  │  ✗ addAllowedAdapter() - cannot add new vaults               │    │
+│  │  ✗ Any call to non-whitelisted addresses                     │    │
+│  │                                                              │    │
+│  │  Signing: Backend signs automatically, NO user interaction   │    │
+│  │  User is never prompted — automation happens silently.       │    │
+│  │                                                              │    │
+│  │  Safety: Even if compromised, can only move funds between    │    │
+│  │          pre-approved vaults. Cannot drain wallet.           │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Security: What If Session Key Is Compromised?**
+
+```
+Scenario: Hacker steals the backend's session key
+
+Hacker tries: transfer(USDC, hackerAddress, allFunds)
+  → Smart wallet: "Is transfer() allowed for session key? NO"
+  → Transaction REVERTS — hacker gets nothing
+
+Hacker tries: migrateStrategy(USDC, hackerControlledVault)
+  → Smart wallet: "Is hackerControlledVault in allowedAdapters? NO"
+  → Transaction REVERTS — hacker gets nothing
+
+What hacker CAN do: migrateStrategy(USDC, morphoAdapter)
+  → Funds move from Aave to Morpho (both legitimate vaults)
+  → User's funds are SAFE — just in a different pre-approved vault
+```
+
+### 4.3 Data Flow: User Spending
+
+```
+User clicks "Send 50 USDC to 0x1234..."
+            │
+            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Frontend builds UserOperation:                                  │
+│  • to: AutoYieldModule                                          │
+│  • data: executeWithAutoYield(USDC, recipient, 50, transferData)│
+│  • signature: User signs with Owner Key                         │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Bundler receives UserOp → Paymaster sponsors gas               │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  EntryPoint → Kernel Account → AutoYieldModule                  │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  executeWithAutoYield() logic:                                   │
+│                                                                  │
+│  1. checkingBalance = USDC.balanceOf(wallet)  // e.g., 30 USDC  │
+│  2. threshold = checkingThreshold[USDC]       // e.g., 100 USDC │
+│  3. needed = amount + threshold               // 50 + 100 = 150 │
+│  4. deficit = needed - checkingBalance        // 150 - 30 = 120 │
+│                                                                  │
+│  5. IF deficit > 0:                                              │
+│     └─▶ yieldAdapter.withdraw(USDC, 120)     // unstake 120     │
+│                                                                  │
+│  6. USDC.transfer(recipient, 50)             // send to recipient│
+│                                                                  │
+│  7. newBalance = USDC.balanceOf(wallet)      // 30 + 120 - 50   │
+│  8. surplus = newBalance - threshold          // 100 - 100 = 0  │
+│                                                                  │
+│  9. IF surplus > 0:                                              │
+│     └─▶ yieldAdapter.deposit(USDC, surplus)  // restake excess  │
+└─────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────┐
+              │  Transaction complete.   │
+              │  User saw: one click.    │
+              │  Behind scenes: unstake  │
+              │  + send + restake        │
+              └──────────────────────────┘
+```
+
+### 4.4 Data Flow: Background Yield Optimization
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Backend Cron (every 5-10 minutes)                               │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  1. YIELD INDEXER                                                │
+│                                                                  │
+│  GET https://yields.llama.fi/pools                              │
+│  Filter: chain = "Base", stablecoin = true                      │
+│                                                                  │
+│  Results:                                                        │
+│  ┌────────────────┬───────┬────────────────────────────┐        │
+│  │ Vault          │ APY   │ Address                    │        │
+│  ├────────────────┼───────┼────────────────────────────┤        │
+│  │ Aave USDC      │ 4.2%  │ 0xabc...                   │        │
+│  │ Morpho USDC    │ 5.1%  │ 0xdef...  ← BEST           │        │
+│  │ Compound USDC  │ 3.8%  │ 0x123...                   │        │
+│  └────────────────┴───────┴────────────────────────────┘        │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  2. WALLET SCANNER                                               │
+│                                                                  │
+│  For each registered wallet:                                     │
+│  • Read currentAdapter[USDC] from AutoYieldModule                │
+│  • Read yieldAdapter.totalValue(USDC, wallet)                   │
+│  • Compare current vault APY vs best available                   │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  3. REBALANCE DECISION                                           │
+│                                                                  │
+│  Wallet 0x1234:                                                  │
+│  • Current: Aave USDC (4.2% APY)                                │
+│  • Best: Morpho USDC (5.1% APY)                                 │
+│  • Improvement: +0.9%                                            │
+│  • Threshold for migration: 0.5%                                 │
+│                                                                  │
+│  Decision: MIGRATE (0.9% > 0.5%)                                 │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  4. BUILD & SUBMIT USEROP                                        │
+│                                                                  │
+│  UserOperation:                                                  │
+│  • sender: wallet (0x1234)                                      │
+│  • to: AutoYieldModule                                          │
+│  • data: migrateStrategy(USDC, morphoAdapter)                   │
+│  • signature: Backend signs with Automation Key                  │
+│                                                                  │
+│  Submit to bundler → Paymaster sponsors → Execute on-chain      │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  5. ON-CHAIN EXECUTION (AutoYieldModule.migrateStrategy)         │
+│                                                                  │
+│  Validation:                                                     │
+│  ✓ Caller signed with automation key                             │
+│  ✓ morphoAdapter is in allowedAdapters[]                        │
+│  ✓ Operation is migrateStrategy (allowed for automation key)    │
+│                                                                  │
+│  Execution:                                                      │
+│  1. oldAdapter.withdraw(USDC, totalValue)  // exit Aave         │
+│  2. USDC.approve(morphoAdapter, balance)                         │
+│  3. morphoAdapter.deposit(USDC, balance)   // enter Morpho      │
+│  4. currentAdapter[USDC] = morphoAdapter                         │
+│                                                                  │
+│  Result: User's funds now earning 5.1% instead of 4.2%          │
+│  User action required: NONE                                      │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. Detailed System Components
+## 5. Detailed Component Specifications
 
-### 5.1 Smart Account & Factory
+### 5.1 Smart Account (Kernel v3)
 
-#### 5.1.1 AutoYieldAccount (Smart Account)
+**What it is:** The user's wallet contract, deployed via ZeroDev Kernel Factory.
 
 **Responsibilities:**
-- Holds user funds (USDC, LP tokens, vault tokens)
-- Implements `validateUserOp` for 4337
-- Forwards execute calls to target contracts
-- Manages installed 7579 modules
+- Hold user funds (USDC, vault shares, dust tokens)
+- Validate UserOperations via installed validators
+- Execute calls through installed executor modules
+- Implement ERC-4337 interface (`validateUserOp`, etc.)
 
-**Key behaviors:**
+**We use Kernel because:**
+- Production-ready ERC-4337 + ERC-7579 implementation
+- Supports multiple validators (owner key + automation key)
+- Supports executor modules (AutoYieldModule)
+- Well-audited, deployed on Base
 
-`validateUserOp`:
-- Verifies signature (owner EOA or session key)
-- Optionally defers to a validator module (if we want full 7579 validation)
+**We do NOT modify Kernel itself** — all custom logic lives in AutoYieldModule.
 
-`execute(to, value, data, operation)`:
-- Only callable by: EntryPoint, or installed 7579 modules (e.g. AutoYieldModule)
-- Executes the call from the wallet
+### 5.2 AutopilotFactory
 
-> For hackathon: we can reuse an existing account implementation (e.g. Kernel or a simple 4337 account) to save time and just focus on module logic.
-
-#### 5.1.2 AutoYieldAccountFactory
-
-**Responsibilities:**
-- Deploy new AutoYieldAccount contracts
-- Install AutoYieldModule for each new account
-- Set EOA owner and initial config
+**What it is:** Deploys new Autopilot wallets with AutoYieldModule pre-installed.
 
 **Key function:**
 
 ```solidity
-function createAccount(
-    address owner,
-    AutoYieldInitConfig calldata config
-) external returns (address account);
+function createAccountFor(address owner, bytes32 salt) public returns (address account) {
+    // 1. Build init data:
+    //    - Set ECDSA validator as root (owner key)
+    //    - Install AutoYieldModule as executor
+    //    - Set default config (threshold, default adapter)
+    //
+    // 2. Call KernelFactory.createAccount(initData, salt)
+    //
+    // 3. Record mapping: accountOf[owner] = account
+}
 ```
 
-**Steps:**
-1. Deploy AutoYieldAccount (optionally with CREATE2)
-2. Set `account.owner = owner`
-3. Register AutoYieldModule as an installed 7579 module
-4. Call `AutoYieldModule.initForAccount(account, config)`
+**Factory responsibilities:**
+- Deploy accounts deterministically (CREATE2)
+- Pre-install AutoYieldModule with safe defaults
+- Register default yield adapter
+- Emit events for indexing
 
-### 5.2 AutoYield Module (ERC-7579 Module)
+### 5.3 AutoYieldModule (ERC-7579 Executor)
 
-#### 5.2.1 Responsibilities
+This is the core brain of the system.
 
-This is the core brain of the product.
+#### 5.3.1 Storage
 
-**Store config per account:**
-- `checkingThreshold` (per token, but initially for USDC)
-- Strategy mapping: `token => YieldAdapter`
-- Dust config:
-  - `consolidationToken`
-  - `trackedTokens[]`
+```solidity
+// Per-account configuration
+mapping(address account => mapping(address token => TokenStrategyConfig)) public tokenStrategies;
+mapping(address account => mapping(address token => uint256)) public checkingThreshold;
+mapping(address account => DustConfig) public dustConfigs;
 
-**Implement:**
-- `executeWithAutoYield` — wrap user actions with:
-  - Pre: ensure enough checking balance
-  - Execute: actual user transfer / call
-  - Post: push excess into yield
-- `rebalance()` — manual optimization
-- `flushToChecking()` — pull everything back into token
-- `sweepDustAndCompound()` — dust → consolidation token → yield
+// Automation authorization
+mapping(address account => address) public automationKey;
+mapping(address account => mapping(address adapter => bool)) public allowedAdapters;
 
-#### 5.2.2 Key functions (conceptual signatures)
+// Current state
+mapping(address account => mapping(address token => address)) public currentAdapter;
+```
+
+#### 5.3.2 Data Structures
 
 ```solidity
 struct TokenStrategyConfig {
-    address adapter;          // YieldAdapter for this token
-    uint16  targetLPBP;       // optional, for LP strategies
-    uint16  maxAllocationBP;  // max % of this token that can go into strategy
-    bool    enabled;
+    address adapter;          // Current yield adapter for this token
+    uint16 targetAllocationBP; // Target % in yield (e.g., 9000 = 90%)
+    uint16 maxSlippageBP;      // Max slippage for migrations
+    bool enabled;              // Whether auto-yield is active
 }
 
 struct DustConfig {
-    address consolidationToken; // e.g. USDC
-    address[] trackedTokens;    // tokens considered "dust sources"
-}
-
-contract AutoYieldModule is IModule {
-    // ===== Config =====
-    function setCheckingThreshold(address token, uint256 threshold) external;
-    function configureTokenStrategy(address token, TokenStrategyConfig calldata cfg) external;
-    function setDustConfig(DustConfig calldata cfg) external;
-
-    // ===== Core execution wrapper =====
-    function executeWithAutoYield(
-        address token,        // token user is spending (e.g. USDC)
-        address to,           // recipient / contract
-        uint256 amount,       // amount in token
-        bytes calldata data   // calldata (e.g. ERC20.transfer)
-    ) external;
-
-    // ===== Maintenance / utilities =====
-    function rebalance() external;
-    function flushToChecking(address token) external;
-    function sweepDustAndCompound() external;
+    address consolidationToken; // Token to consolidate dust into (USDC)
+    address[] trackedTokens;    // Tokens to sweep as dust
+    uint256 minSweepValue;      // Minimum USD value to trigger sweep
 }
 ```
 
-> All these functions are called via the smart account, not via the EOA directly. In practice, the user signs a 4337 userOp that calls these through EntryPoint → Account → Module.
+#### 5.3.3 Functions
 
-#### 5.2.3 Internal logic
+**Owner-only functions (require owner key signature):**
 
-**`_ensureCheckingBalance(token, amount)`:**
-- If token == USDC (for v1):
-  - Compute `required = amount + checkingThreshold[token]`
-  - If `USDC_balance < required`:
-    - Ask YieldAdapter to withdraw `required - balance` worth from yield
-    - If needed, also unwind LP (via adapter)
+```solidity
+// Configuration
+function setCheckingThreshold(address token, uint256 threshold) external;
+function configureTokenStrategy(address token, TokenStrategyConfig calldata cfg) external;
+function setDustConfig(DustConfig calldata cfg) external;
+function setAutomationKey(address key) external;
+function addAllowedAdapter(address adapter) external;
+function removeAllowedAdapter(address adapter) external;
 
-**`_pushExcessToYield(token)`:**
-- After execution, recompute balance
-- If `balance > checkingThreshold[token]`:
-  - Deposit `balance - threshold` into yield via adapter
+// Spending (auto-withdraws from yield if needed)
+function executeWithAutoYield(
+    address token,
+    address to,
+    uint256 amount,
+    bytes calldata data
+) external;
 
-**`_rebalanceToStrategies(token)`:**
-- Called by `rebalance()`: moves current surplus into strategies up to `maxAllocationBP`
+// Emergency
+function flushToChecking(address token) external;
+```
 
-**`_sweepDust()`:**
-- For each trackedToken:
-  - `bal = balanceOf(trackedToken)`
-  - If > 0 and not consolidationToken:
-    - Swap token → consolidationToken via router (DEX)
+**Automation-allowed functions (can be signed by automation key OR owner key):**
 
-**`_compoundDust()`:**
-- After `_sweepDust`, if consolidationToken has a strategy adapter and is enabled:
-  - Deposit balance into yield via adapter
+```solidity
+// Move excess checking balance into yield
+function rebalance(address token) external;
 
-`executeWithAutoYield` uses these internally to orchestrate.
+// Migrate from current vault to better vault
+function migrateStrategy(address token, address newAdapter) external;
 
-### 5.3 YieldAdapter & Yield Sources
+// Sweep dust tokens and compound into yield
+function sweepDustAndCompound() external;
+```
 
-#### 5.3.1 IYieldAdapter interface
+#### 5.3.4 Core Logic: executeWithAutoYield
+
+```solidity
+function executeWithAutoYield(
+    address token,
+    address to,
+    uint256 amount,
+    bytes calldata data
+) external onlyOwner {
+    address account = msg.sender;
+    uint256 threshold = checkingThreshold[account][token];
+
+    // 1. Calculate how much we need in checking
+    uint256 required = amount + threshold;
+    uint256 checking = IERC20(token).balanceOf(account);
+
+    // 2. Withdraw from yield if checking balance insufficient
+    if (checking < required) {
+        uint256 deficit = required - checking;
+        _withdrawFromYield(account, token, deficit);
+    }
+
+    // 3. Execute the user's intended action
+    IKernel(account).execute(to, 0, data);
+
+    // 4. Deposit any surplus back into yield
+    uint256 newChecking = IERC20(token).balanceOf(account);
+    if (newChecking > threshold) {
+        uint256 surplus = newChecking - threshold;
+        _depositToYield(account, token, surplus);
+    }
+}
+```
+
+#### 5.3.5 Core Logic: migrateStrategy
+
+```solidity
+function migrateStrategy(
+    address token,
+    address newAdapter
+) external onlyAutomationOrOwner {
+    address account = msg.sender;
+
+    // Validate new adapter is whitelisted
+    require(allowedAdapters[account][newAdapter], "adapter not allowed");
+
+    address oldAdapter = currentAdapter[account][token];
+    if (oldAdapter == newAdapter) return; // Already on this vault
+
+    // 1. Withdraw everything from old vault
+    uint256 yieldBalance = IYieldAdapter(oldAdapter).totalValue(token, account);
+    if (yieldBalance > 0) {
+        IYieldAdapter(oldAdapter).withdraw(token, yieldBalance);
+    }
+
+    // 2. Calculate amount to deposit (respect checking threshold)
+    uint256 checking = IERC20(token).balanceOf(account);
+    uint256 threshold = checkingThreshold[account][token];
+
+    if (checking > threshold) {
+        uint256 toDeposit = checking - threshold;
+
+        // 3. Deposit into new vault
+        IERC20(token).approve(newAdapter, toDeposit);
+        IYieldAdapter(newAdapter).deposit(token, toDeposit);
+    }
+
+    // 4. Update current adapter
+    currentAdapter[account][token] = newAdapter;
+
+    emit StrategyMigrated(account, token, oldAdapter, newAdapter);
+}
+```
+
+#### 5.3.6 Authorization Modifier
+
+```solidity
+modifier onlyAutomationOrOwner() {
+    address account = msg.sender;
+    // The call comes through the Kernel account
+    // We need to check if the original signer was owner or automation key
+    // This is validated by Kernel before calling the module
+    _;
+}
+```
+
+**Note:** The actual authorization happens at the Kernel validation layer. Kernel checks if the UserOperation signature matches either:
+1. The root validator (owner's ECDSA key) — allows all operations
+2. A secondary validator configured for automation — only allows specific function selectors
+
+### 5.4 IYieldAdapter Interface
 
 ```solidity
 interface IYieldAdapter {
-    function deposit(uint256 amount) external;
-    function withdraw(uint256 amount) external returns (uint256 withdrawn);
-    function totalValue() external view returns (uint256);
+    /// @notice Deposit tokens into the yield strategy
+    function deposit(address token, uint256 amount) external returns (uint256 shares);
+
+    /// @notice Withdraw tokens from the yield strategy
+    function withdraw(address token, uint256 amount) external returns (uint256 actualAmount);
+
+    /// @notice Get total value deposited for an account
+    function totalValue(address token, address account) external view returns (uint256);
+
+    /// @notice Get the underlying vault address
+    function getVault(address token) external view returns (address);
 }
 ```
 
-**Implementation ideas:**
-- **VaultAdapter:** wraps an ERC-4626 vault
-- **LPAdapter:** uses a router to:
-  - Swap half to paired token
-  - Add liquidity
-  - Later remove liquidity and swap back into base token
+**Implementations we'll build:**
+- `MorphoAdapter` — wraps Morpho Blue MetaMorpho vaults (ERC-4626 compliant, highest APY)
+- `MockYieldVault` — for testing and demo
 
-**For hackathon, keep it simple:**
-- Use a simple ERC-4626 vault contract
-- MockYieldVault that:
-  - Accepts USDC
-  - Mints vaultShares
-  - For demo, we can fudge yield (e.g. allow withdrawing 105% after certain blocks)
+**Note:** Aave and Moonwell adapters are not built for MVP. The yield aggregator fetches their rates for UI display, but all actual deposits go to Morpho vaults which currently offer the best yields (5-7% APY).
 
-#### 5.3.2 MockYieldVault (for demo)
+### 5.5 Paymaster
 
-- Holds USDC
-- Provides:
-  - `deposit(uint256 assets, address receiver) returns (uint256 shares)`
-  - `withdraw(uint256 assets, address receiver, address owner) returns (uint256 shares)`
-- We can simulate APY by:
-  - Increasing an "exchange rate" over time
-  - Or simply ignoring APY in code and just verbally explaining yield
+**What it is:** Sponsors gas for all Autopilot wallet operations.
 
-### 5.4 Paymaster
+**Provider:** Base Paymaster (Coinbase Developer Platform)
 
-#### 5.4.1 AutoYieldPaymaster
+**Behavior:**
+- Validates that the UserOp targets an Autopilot wallet
+- Validates the operation is a known function (executeWithAutoYield, rebalance, etc.)
+- Sponsors the gas cost
+- User never sees gas fees or needs ETH
 
-**Responsibilities:**
-- Sponsor gas for userOps that:
-  - Call AutoYieldModule functions (executeWithAutoYield, rebalance, sweep)
-  - Maybe calls to configure module
+### 5.6 Backend Optimizer Service
 
-**Key behavior:**
+#### 5.6.1 Components
 
-```solidity
-function validatePaymasterUserOp(
-    UserOperation calldata userOp,
-    bytes32 userOpHash,
-    uint256 maxCost
-) external returns (bytes memory context, uint256 validationData);
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  BACKEND OPTIMIZER                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  Yield Aggregator (Cron: every 5 min)                  │ │
+│  │  • Query Morpho GraphQL API directly                   │ │
+│  │  • Query Aave GraphQL API directly                     │ │
+│  │  • Merge, filter by TVL, sort by APY                   │ │
+│  │  • Store: vaultAddress → { apy, tvl, protocol }        │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  Wallet Registry (Database)                            │ │
+│  │  • walletAddress → { owner, currentVault, lastUpdate } │ │
+│  │  • Populated when wallets are created                  │ │
+│  │  • Updated after each migration                        │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  Rebalance Engine (Cron: every 10 min)                 │ │
+│  │  • For each wallet in registry:                        │ │
+│  │    - Read on-chain: currentAdapter, yieldBalance       │ │
+│  │    - Compare currentVaultAPY vs bestVaultAPY           │ │
+│  │    - If delta > threshold (0.5%): queue migration      │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  UserOp Submitter                                      │ │
+│  │  • Build UserOperation for migrateStrategy()           │ │
+│  │  • Sign with session key (stored securely)             │ │
+│  │  • Submit to ZeroDev bundler                           │ │
+│  │  • Handle retries and confirmations                    │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  API Endpoints                                         │ │
+│  │  • GET /strategies - list available vaults + APYs      │ │
+│  │  • GET /wallet/:address - wallet status + positions    │ │
+│  │  • POST /register - register new wallet for automation │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Checks:**
-- `userOp.sender` is an AutoYieldAccount
-- `userOp.callData` targets our module or account with known function selectors
+#### 5.6.2 Yield Aggregator Details
 
-**If valid:**
-- Commit to paying gas
-- We pre-fund the paymaster with ETH on Base (or Sepolia)
-- User never needs to see/hold ETH for normal operations
+**Data sources:** Direct protocol GraphQL APIs (NOT DefiLlama)
 
----
+We query each protocol's official API to get real-time vault data:
 
-## 6. Frontend & Backend Responsibilities
+| Protocol | API Endpoint | Data Returned |
+|----------|--------------|---------------|
+| Morpho | `https://blue-api.morpho.org/graphql` | Vault address, netApy, netApyWithoutRewards, rewards, TVL |
+| Aave | `https://api.v3.aave.com/graphql` | Vault address, vaultApr, supplyApy, TVL, fees |
 
-### 6.1 Frontend (Next.js / React)
+**Morpho GraphQL Queries:**
 
-**Pages / features:**
+```graphql
+# Step 1: Get asset address for USDC on Base
+query GetChainAsset($chainId: Int!, $assetSymbol: String!) {
+  assets(where: {chainId_in: [$chainId], symbol_in: [$assetSymbol]}) {
+    items { address }
+  }
+}
 
-**Landing (`/`):**
-- Simple explanation
-- Connect wallet
-- Button: "Create Autopilot Wallet"
+# Step 2: List all vaults for that asset
+query ListVaults($skip: Int!, $chainId: Int!, $assetAddress: String!) {
+  vaults(first: 1000, skip: $skip, where: {chainId_in: [$chainId], assetAddress_in: [$assetAddress]}) {
+    items {
+      name address symbol
+      warnings { type level }
+      state {
+        totalAssetsUsd
+        netApy                  # Total APY including rewards
+        netApyWithoutRewards    # Base lending APY
+        rewards {
+          supplyApr
+          asset { address symbol }
+        }
+      }
+    }
+    pageInfo { count limit }
+  }
+}
+```
 
-**Dashboard (`/dashboard`):**
-- Show:
-  - Checking balance (e.g. USDC)
-  - Yield balance (vault shares)
-  - Total value
-  - Config: checking threshold
-  - Enabled tokens / strategies
-- Buttons:
-  - "Rebalance Now"
-  - "Clean Up Wallet"
+**Aave GraphQL Query:**
 
-**Pay (`/pay`):**
-- Form:
-  - Recipient address
-  - Token (USDC)
-  - Amount
-- Button: "Pay with AutoYield"
-- After click:
-  - Build userOp calling executeWithAutoYield
-  - Use OnchainKit / bundler client to send
+```graphql
+query GetVaults($cursor: Cursor) {
+  vaults(request: { criteria: { ownedBy: [] }, pageSize: FIFTY, cursor: $cursor }) {
+    items {
+      address
+      shareName
+      shareSymbol
+      chainId
+      vaultApr { value }        # Vault APR after fees
+      fee { value }
+      balance {
+        amount { value }
+        usd                     # TVL in USD
+      }
+      usedReserve {
+        underlyingToken { symbol address }
+        supplyInfo { apy { value } }  # Base supply APY
+      }
+    }
+    pageInfo { next prev }
+  }
+}
+```
 
-**Integrations:**
+**Output format (unified across protocols):**
 
-**Base OnchainKit / Coinbase Wallet SDK:**
-- For connecting EOA
-- For 4337 smart account creation: `createSmartAccount` → uses Factory initCode
-- For sending userOps: `sendUserOperation({ to: AutoYieldModule, data: executeWithAutoYieldData, paymaster: AutoYieldPaymaster })`
+```typescript
+interface Vault {
+  // Identification
+  name: string;           // e.g., "Steakhouse USDC"
+  address: string;        // Vault contract address
+  symbol: string;         // e.g., "steakUSDC"
 
-**viem / wagmi:**
-- For contract interactions (read)
-- For reading on-chain data: balances, thresholds, vault value
+  // Yield data
+  apy: number;            // Total effective APY (decimal: 0.05 = 5%)
+  baseApy: number;        // Base lending APY without rewards
+  rewards: Reward[];      // Additional reward tokens
 
-**(Optional) Circle / Coinbase Pay:**
-- UI button: "Deposit from bank/card"
-- Behind the scenes: call Circle sandbox API to generate deposit intent into the smart account address
-- For hackathon: we can stub this or keep it minimal
+  // Risk/size data
+  tvlUsd: number;         // Total value locked
 
-### 6.2 Backend (Optional / Minimal)
+  // Metadata
+  source: "morpho" | "aave";
+  chainId: number;
+  underlyingAsset: string; // "USDC"
+}
 
-For the hackathon, backend is nice-to-have, not required.
+interface Reward {
+  symbol: string;         // e.g., "MORPHO"
+  apy: number;            // Reward APY contribution
+}
+```
 
-**Possible backend tasks:**
-- Fetch APYs from external APIs / subgraphs
-- Maintain a curated list of "safe strategies"
-- Provide a simple REST endpoint: `GET /strategies/usdc` → returns the recommended adapter address & APY
-- Provide an SDK function to the frontend
+**Aggregator Logic:**
 
-**But core system works without backend:**
-- Strategies can be hardcoded or manually configured in contracts
-- APY can be shown as a static or manually entered value
+```typescript
+async function getBestVaults(options: {
+  assetSymbol?: string;    // Default: "USDC"
+  chainId?: number;        // Default: 8453 (Base)
+  minTvlUsd?: number;      // Filter small/test vaults
+  excludeWarnings?: boolean; // Skip Morpho vaults with warnings
+  topN?: number;           // Return top N vaults
+}): Promise<Vault[]> {
 
----
+  // 1. Fetch from both sources in parallel
+  const [morphoVaults, aaveVaults] = await Promise.all([
+    getMorphoVaults(assetSymbol, chainId, excludeWarnings),
+    getAaveVaults(assetSymbol, chainId),
+  ]);
 
-## 7. Security & Constraints
+  // 2. Merge all vaults
+  let allVaults = [...morphoVaults, ...aaveVaults];
 
-- **User opt-in:** Auto-yield only applies to tokens the user explicitly configures
-- **Per-token caps:** Each token strategy has `maxAllocationBP` (max % of that token to allocate into yield)
-- **Safe addresses only:** In hackathon, we'll hardcode strategy adapters in the module or factory. No user-supplied random adapters.
-- **Validator sanity:** The validator / account can reject userOps where the module tries to exceed configured caps. This prevents malicious module upgrades from hijacking funds.
+  // 3. Filter by minimum TVL
+  if (minTvlUsd > 0) {
+    allVaults = allVaults.filter(v => v.tvlUsd >= minTvlUsd);
+  }
 
----
+  // 4. Sort by APY (highest first)
+  allVaults.sort((a, b) => b.apy - a.apy);
 
-## 8. Deliverables & Milestones
+  // 5. Return top N
+  return topN ? allVaults.slice(0, topN) : allVaults;
+}
+```
 
-### 8.1 Smart Contracts
+**Example output:**
 
-| Contract | Description |
-|----------|-------------|
-| `AutoYieldAccount.sol` | Minimal 4337 account, or fork from Kernel |
-| `AutoYieldAccountFactory.sol` | Deploys new accounts, installs AutoYieldModule |
-| `AutoYieldModule.sol` | Implements config, executeWithAutoYield, rebalance, flushToChecking, sweepDustAndCompound |
-| `IYieldAdapter.sol` | Interface for yield adapters |
-| `VaultAdapter.sol` | For USDC -> MockYieldVault |
-| `MockYieldVault.sol` | ERC-4626-like vault for demo |
-| `AutoYieldPaymaster.sol` | Gas sponsorship |
-| `MockDexRouter.sol` | (Optional) For dust swap / LP demo |
+```
+[MORPHO] Steakhouse USDC
+  Address: 0x123...
+  APY: 8.45% (base: 3.20%)
+  TVL: $12,345,678
+  └─ MORPHO: +2.10%
+  └─ wstETH: +0.35%
 
-### 8.2 Frontend
+[AAVE] Aave USDC Vault Shares
+  Address: 0x21C...
+  APY: 3.16% (base: 3.26%)
+  TVL: $2,001,234
+```
 
-- Wallet creation flow (connect EOA, create smart account)
-- Dashboard (show balances & config, "Rebalance Now" button, "Clean Up Wallet" button)
-- Pay screen (simple send flow using executeWithAutoYield)
-- OnchainKit integration for userOps and bundler
+#### 5.6.3 Migration Decision Logic
 
-### 8.3 Demo Script
+```typescript
+function shouldMigrate(wallet: WalletState, vaults: VaultInfo[]): MigrationDecision {
+  const currentVault = vaults.find(v => v.address === wallet.currentVaultAddress);
+  const bestVault = vaults.reduce((best, v) => v.apy > best.apy ? v : best);
 
-**Scenario:**
-1. Show empty dashboard
-2. Create new Autopilot wallet
-3. Send test USDC into it from EOA
-4. Set checking threshold and enable USDC strategy
-5. Click "Rebalance Now": Show funds moved from checking → yield
-6. Show dust tokens (airdrop some mock tokens)
-7. Click "Clean Up Wallet": Watch dust swapped into USDC and deposited into yield
-8. Go to Pay screen: Pay 20 USDC to merchant
-9. Show:
-   - Module freed needed USDC from yield
-   - Payment succeeded
-   - Remaining balance re-yielded
-10. Open block explorer showing a single transaction containing multiple internal calls
+  const apyImprovement = bestVault.apy - (currentVault?.apy ?? 0);
+  const MIGRATION_THRESHOLD = 0.005; // 0.5% improvement required
 
----
+  if (apyImprovement > MIGRATION_THRESHOLD) {
+    return {
+      shouldMigrate: true,
+      fromAdapter: currentVault.adapterAddress,
+      toAdapter: bestVault.adapterAddress,
+      expectedApyGain: apyImprovement
+    };
+  }
 
-## 9. Summary
-
-**In simple terms for the team:**
-
-We're building a smart wallet on Base that:
-- Makes yield automatic
-- Makes paying from yield automatic
-- Keeps your "spend vs invest" logic inside the wallet itself
-- Cleans up stray tokens and folds them into yield
-
-**Technically:**
-
-It's an ERC-4337 smart account with a custom ERC-7579 module that:
-- Runs pre/post hooks around your actions
-- Moves funds between checking & yield
-- Can multicall dust sweeping → consolidation → deposit
-
-**UX:**
-
-User does normal stuff:
-- Receives USDC
-- Sends USDC
-- Clicks "clean wallet"
-
-Everything else (moving to/from vaults/LPs, consolidating dust) is automatic, gasless, and invisible.
-
----
-
-## Work Delegation
-
-### Jackson — Smart Contracts
-
-| Ticket | Description | Deliverable |
-|--------|-------------|-------------|
-| 1.1 | AutoYield Smart Wallet (ERC-4337) | Can validate UserOps + execute transfers |
-| 1.2 | 7579 Module System | `installModule()`, `uninstallModule()`, registry |
-| 1.3 | Wallet Factory | Deploy wallet + autoinstall AutoYieldModule |
-| 2.1 | On-chain config storage for thresholds / tracking | `setThreshold` / `setStrategy` / `setDustConfig` |
-| 2.2 | `executeWithAutoYield` | Payment wrapper: withdraw if needed → execute → redeposit |
-| 2.3 | `rebalance()` | Deposit excess into yield vault |
-| 2.4 | `sweepDustAndCompound()` | Swap dust → USDC → deposit |
-| 2.5 | Safety / caps | `maxAllocationBP` checks |
-| 3.1 | Yield Adapter interface | `IYieldAdapter.sol` |
-| 3.2 | 4626 adapter | Supports deposit/withdraw |
-| 3.3 | Mock Yield Vault | Needed for demo |
-| 4.1 | Paymaster validation | Sponsor gas for module calls |
-| 4.2 | Paymaster policy | Only sponsor txs from AutoYield wallets |
-
-**Acceptance criteria:**
-- Wallet deploys through factory with module pre-installed
-- UserOp: pay merchant → funds auto-unstake + top-up gasless
-- Dust sweep → USDC → redeposit → viewable in UI balances
-
-### Bryce — Backend / Yield Strategy / Data Automation
-
-| Ticket | Description | Deliverable |
-|--------|-------------|-------------|
-| B1 | Index protocols with highest yield | Small API aggregator returning APY + vault address |
-| B2 | Strategy selector | Score vaults & pick best based on risk + APY |
-| B3 | Auto-rebalance scheduler | (crontab / keep-alive) pings wallets when yield conditions met |
-| B4 | Dust token metadata service | Returns dust list + consolidated token |
-| B5 | Bundler integration service | Backend composes the userOp needed for: rebalance / dust sweep / payment-withdraw |
-| B6 | Paymaster server | Prepaid balance → mint sponsor signature |
-
-**Acceptance criteria:**
-- Returns a JSON payload the frontend can call: `POST /recommend?wallet=0x` → best strategy
-- `POST /ops/pay` returns a fully composed UserOp ready for onchain
-- No backend system depends on contract deployment to begin implementation
-
-### Logan — Frontend
-
-| Ticket | Description | Deliverable |
-|--------|-------------|-------------|
-| F1 | Wallet creation UI | Create Wallet → calls factory API → shows address |
-| F2 | Dashboard | Checking + yield + dust balances |
-| F3 | Settings screen | Threshold, toggles, dust target, risk tolerance |
-| F4 | Rebalance button | Calls backend `/ops/rebalance` |
-| F5 | Dust sweep button | Calls backend `/ops/dust` |
-| F6 | Pay screen | Pay → triggers `/ops/pay` → confirmation |
-| F7 | Transaction status toasts | Success / failure toasts pulled from backend response |
-| F8 | "Magic Moment" page | Theme for hackathon demo — show staked → auto unstake → pay → restake |
-
-**Acceptance criteria:**
-- No raw blockchain RPC calls are needed — just backend endpoints
-- Fully styled — must look clean enough to win
-
-### Robby — Frontend Support / Demo Infrastructure
-
-| Ticket | Description | Deliverable |
-|--------|-------------|-------------|
-| R1 | REST client wrapper | Axios wrapper for backend endpoints |
-| R2 | Wallet context | Central store to manage wallet addresses & balances |
-| R3 | Balance polling | Hit backend every X sec for balances |
-| R4 | Yield analytics sidebar | APY chart + last deposit timestamp |
-| R5 | Merchant demo site | Separate page showing "payment received!" |
-| R6 | Guided onboarding | Coach marks that explain the UX to judges |
-| R7 | "Reload Demo" script | Reset wallet + send funds + dust for stage demos |
-
-**Acceptance criteria:**
-- Demo can be run start → finish → reset in < 2 mins
-- Merchant screen shows payment instantly when test run happens
+  return { shouldMigrate: false };
+}
+```
 
 ---
 
-## Providers & Stack Selection
+## 6. User Flows
 
-This section specifies every external tool, SDK, and protocol used across the system, plus backup options when applicable. The intent is to ensure the entire build is unblocked from day one, with no ambiguity on providers or infra.
+### 6.1 Onboarding (One-Time Setup)
 
-### Smart Account + Module Layer
+**Important: The user's existing wallet (MetaMask/Coinbase Wallet) is used for SIGNING only. All funds go to the NEW smart wallet.**
 
-- The smart account will be built using **ZeroDev Kernel v3**, which supports ERC-4337 accounts and direct installation of ERC-7579 modules
-- The AutoYieldModule will be a custom ERC-7579 module using the **Rhinestone 7579 module interface**. We deploy our own validator/executor module, we do not depend on an external module registry
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 1: Connect Existing Wallet (for signing)                   │
+│                                                                  │
+│  User connects their EOA (Coinbase Wallet / MetaMask)           │
+│                                                                  │
+│  This wallet will NOT hold funds — it only proves identity.     │
+│  The EOA address becomes the "owner" who can authorize txs.     │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 2: Create Autopilot Wallet (Smart Account)                 │
+│                                                                  │
+│  User clicks "Create Autopilot Wallet"                          │
+│                                                                  │
+│  Behind the scenes:                                              │
+│  1. Frontend reads user's EOA address (0xUser123...)            │
+│  2. Frontend calls: factory.createAccountFor(eoaAddress, salt)  │
+│  3. Factory deploys Kernel account configured with:             │
+│     • ECDSA Validator: 0xUser123 is the owner/signer            │
+│     • AutoYieldModule: pre-installed as executor                │
+│  4. User receives their NEW smart wallet address (0xSmart456...)│
+│                                                                  │
+│  The smart wallet is where ALL funds will live.                 │
+│  The EOA (0xUser123) is only used to SIGN transactions.         │
+│                                                                  │
+│  User signs one message to authorize deployment.                │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 3: Configure Autopilot                                     │
+│  User sets preferences:                                          │
+│  • Checking threshold: "Keep 100 USDC liquid"                   │
+│  • Enable auto-yield for USDC: ✅                               │
+│  • Authorize automation key: ✅                                  │
+│                                                                  │
+│  One signature commits all settings on-chain                    │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 4: Fund the SMART WALLET (not the EOA!)                    │
+│                                                                  │
+│  User sends USDC to their SMART WALLET address (0xSmart456...)  │
+│  NOT to their MetaMask/Coinbase Wallet address!                 │
+│                                                                  │
+│  Funding options:                                                │
+│  • From CEX withdrawal → send to 0xSmart456                     │
+│  • From existing wallet → transfer to 0xSmart456                │
+│  • (Optional) Via onramp                                         │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 5: Automation Begins                                       │
+│  Backend detects new deposit:                                    │
+│  • Builds UserOp: rebalance(USDC)                               │
+│  • Signs with session key (automation key)                       │
+│  • Excess USDC deposited to highest-yield vault                 │
+│                                                                  │
+│  User action required: NONE                                      │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-### Bundler + Gas Sponsorship
+**The Two Addresses Explained:**
 
-- **Base's native Bundler RPC** will be used for userOp broadcasting
-- **Base Paymaster (Coinbase Developer Platform)** will be used for full gas abstraction. This eliminates the need for Pimlico/StackUp, and guarantees the experience is "no ETH needed anywhere"
-- Optional stretch: sponsor only wallet functions originating from AutoYieldModule to prevent malicious gas drains
+| Address | What It Is | Holds Funds? | Used For |
+|---------|------------|--------------|----------|
+| `0xUser123...` | User's EOA (MetaMask) | NO | Signing transactions |
+| `0xSmart456...` | Autopilot Smart Wallet | YES | Holding USDC, yield positions |
 
-### UserOp / Client SDKs
+**After onboarding, the user never needs to:**
+- Click "rebalance"
+- Approve vault deposits
+- Monitor yields
+- Sign yield optimization transactions
 
-- **OnchainKit Smart Wallet client** will be used for building and sending userOps
-- **viem + Wagmi** will be used for general RPC reads and interaction inside the frontend
-- **Coinbase Wallet SDK** for onboarding the user's EOA during wallet creation
+### 6.2 Spending Flow (Auto-Unstake)
 
-### Assets + Yield Sources
+**Scenario:** User has 500 USDC. 100 USDC checking, 400 USDC in Morpho vault. Wants to send 150 USDC.
 
-- The primary asset used for yield automation will be **USDC (native on Base)**
-- The first yield strategy will use **ERC-4626-compatible vaults** on Base. Expected implementation:
-  - Aerodrome vaults or Beefy vaults depending on APY and reliability
-  - If external APYs become unreliable during hackathon time, fallback will be a **Mock Yield Vault** (ERC-4626 interface) to guarantee demo stability
-- If time permits, an LP adapter will be added for Aerodrome LP pairs
+```
+User: "Send 150 USDC to 0x1234..."
+                │
+                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Frontend: Build UserOp                                          │
+│  • Function: executeWithAutoYield(USDC, recipient, 150, data)   │
+│  • User signs ONCE with owner key                               │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  AutoYieldModule: executeWithAutoYield()                         │
+│                                                                  │
+│  State before:                                                   │
+│  • checking: 100 USDC                                           │
+│  • yield: 400 USDC (in Morpho)                                  │
+│  • threshold: 100 USDC                                          │
+│                                                                  │
+│  Calculation:                                                    │
+│  • required = 150 + 100 = 250 USDC                              │
+│  • deficit = 250 - 100 = 150 USDC                               │
+│                                                                  │
+│  Actions (all in one tx):                                        │
+│  1. morphoAdapter.withdraw(USDC, 150) → checking now 250 USDC   │
+│  2. USDC.transfer(recipient, 150) → checking now 100 USDC       │
+│  3. surplus = 100 - 100 = 0, no redeposit needed                │
+│                                                                  │
+│  State after:                                                    │
+│  • checking: 100 USDC ✓ (threshold maintained)                  │
+│  • yield: 250 USDC                                              │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────┐
+              │  User experience:        │
+              │  • Clicked "Send"        │
+              │  • Signed once           │
+              │  • Transfer complete     │
+              │                          │
+              │  User did NOT:           │
+              │  • Click "unstake"       │
+              │  • Sign vault withdrawal │
+              │  • Wait for unstake tx   │
+              │  • Then sign transfer    │
+              └──────────────────────────┘
+```
 
-### DEX + Swap Layer for Dust Consolidation
+### 6.3 Background Yield Optimization
 
-- For dust swapping and consolidation, the preferred router is **Aerodrome Router** on Base
-- Fallback option: **Uniswap v3 router** on Base
-- Sane default slippage % will be enforced to avoid edge-case mispricing
+**Scenario:** User's funds are in Aave (4.2% APY). Morpho now offers 5.5% APY.
 
-### APY / Yield Discovery
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Backend Cron (user is asleep, not using app)                   │
+│                                                                 │
+│  1. Yield Indexer fetches latest APYs                           │
+│     • Aave USDC: 4.2%                                           │
+│     • Morpho USDC: 5.5% ← NEW BEST                              │
+│                                                                 │
+│  2. Rebalance Engine scans user's wallet                        │
+│     • Current: Aave (4.2%)                                      │
+│     • Best: Morpho (5.5%)                                       │
+│     • Delta: +1.3% > 0.5% threshold                             │
+│     • Decision: MIGRATE                                         │
+│                                                                 │
+│  3. UserOp Submitter                                            │
+│     • Builds: migrateStrategy(USDC, morphoAdapter)              │
+│     • Signs with automation key                                  │
+│     • Submits to bundler                                         │
+│                                                                  │
+│  4. On-chain execution                                           │
+│     • Withdraw from Aave                                         │
+│     • Deposit to Morpho                                          │
+│     • Update currentAdapter                                      │
+│                                                                  │
+│  User wakes up:                                                  │
+│  • Dashboard shows "Now earning 5.5% on Morpho"                 │
+│  • User action required: NONE                                    │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-Backend (or static config for hackathon) pulls yield data from:
-- DefiLlama Yields API
-- Beefy subgraph
-- Aerodrome analytics API
-- Morpho Blue / Spark if needed
+### 6.4 Dust Sweep
 
-The backend exposes a simple REST endpoint: `/strategies/<token>` → returns the recommended vault/adapter and APY.
+**Scenario:** User received airdrops of random tokens. Wants to consolidate.
 
-If time is limited, vault selection will be deterministic rather than dynamic.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  OPTION A: Manual Sweep                                          │
+│                                                                  │
+│  User clicks "Clean Up Wallet" in dashboard                     │
+│  • Signs one transaction                                         │
+│  • All dust tokens swapped to USDC via Aerodrome                │
+│  • USDC deposited to yield vault                                │
+└─────────────────────────────────────────────────────────────────┘
 
-### Indexing / Metadata
+┌─────────────────────────────────────────────────────────────────┐
+│  OPTION B: Automated Sweep                                       │
+│                                                                  │
+│  Backend detects dust tokens above threshold                    │
+│  • Builds UserOp: sweepDustAndCompound()                        │
+│  • Signs with automation key                                     │
+│  • Dust swapped and compounded                                  │
+│                                                                  │
+│  User action required: NONE                                      │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-- Balances and logs will be read using **Base RPC via OnchainKit + viem**
-- Yield/token metadata can additionally use:
-  - DefiLlama API
-  - The Graph for Beefy and Aerodrome
-- Explorer links for transactions will use **BaseScan**
+---
 
-### On/Off-Ramp (Optional)
+## 7. Security Model
 
-If we include a deposit UX from fiat, the preferred ramp provider is **Circle APIs** or **Coinbase Pay Widget**. This is optional and can be mocked if time is constrained.
+### 7.1 Automation Key Constraints
 
-### Hosting / Infra
+The automation key is powerful but constrained:
 
-- Smart contracts deployed on **Base Sepolia** for hackathon demo
-- Backend (if used) hosted on **Vercel serverless** or **Cloudflare workers** for minimal infra overhead
+| Can Do | Cannot Do |
+|--------|-----------|
+| Call `rebalance()` | Call `transfer()` or send funds externally |
+| Call `migrateStrategy()` to whitelisted adapters | Add new adapters to whitelist |
+| Call `sweepDustAndCompound()` | Change checking thresholds |
+| Move funds between approved vaults | Withdraw funds to arbitrary addresses |
+
+**If automation key is compromised:**
+- Attacker can only move funds between pre-approved, audited vaults
+- Attacker cannot drain funds to their own address
+- User can revoke automation key anytime via `setAutomationKey(address(0))`
+
+### 7.2 Adapter Whitelist
+
+Only pre-approved adapters can receive funds:
+
+```solidity
+mapping(address account => mapping(address adapter => bool)) public allowedAdapters;
+
+function migrateStrategy(address token, address newAdapter) external {
+    require(allowedAdapters[msg.sender][newAdapter], "adapter not allowed");
+    // ...
+}
+```
+
+**Adapters are whitelisted by:**
+1. Factory sets default adapters on account creation
+2. User can add adapters via `addAllowedAdapter()` (owner key only)
+
+### 7.3 Threshold Protection
+
+The checking threshold is always respected:
+
+```solidity
+// In migrateStrategy and rebalance
+uint256 checking = IERC20(token).balanceOf(account);
+uint256 threshold = checkingThreshold[account][token];
+
+uint256 toDeposit = checking > threshold ? checking - threshold : 0;
+```
+
+Automation cannot deposit the user's last dollar — the threshold amount stays liquid.
+
+### 7.4 No Proxy Upgrades
+
+Contracts are not upgradeable. This prevents:
+- Malicious upgrades that change security model
+- Backdoors added after audit
+- Rug pulls via admin functions
+
+### 7.5 Summary: Defense in Depth
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SECURITY LAYERS                               │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Layer 1: Key Separation                                         │
+│  └─ Automation key cannot transfer funds externally              │
+│                                                                  │
+│  Layer 2: Adapter Whitelist                                      │
+│  └─ Funds can only move to pre-approved vaults                   │
+│                                                                  │
+│  Layer 3: Threshold Protection                                   │
+│  └─ Checking balance always maintained                           │
+│                                                                  │
+│  Layer 4: User Override                                          │
+│  └─ Owner key can revoke automation anytime                      │
+│                                                                  │
+│  Layer 5: Non-Upgradeable                                        │
+│  └─ Contract logic cannot be changed after deployment            │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 8. Providers & Stack
+
+### 8.1 Smart Account Layer
+
+| Component | Provider | Notes |
+|-----------|----------|-------|
+| Smart Account | ZeroDev Kernel v3 | ERC-4337 + ERC-7579 compliant |
+| Account Factory | ZeroDev KernelFactory | Deployed on Base |
+| ECDSA Validator | ZeroDev ECDSAValidator | For owner key validation |
+
+### 8.2 Bundler & Gas
+
+| Component | Provider | Notes |
+|-----------|----------|-------|
+| Bundler | ZeroDev Bundler | Primary; fallback: Pimlico |
+| Paymaster | Base Paymaster (CDP) | Full gas sponsorship |
+| EntryPoint | ERC-4337 v0.7 | Standard deployment |
+
+### 8.3 Yield Sources
+
+**Backend Yield Aggregator (for display/comparison):**
+
+The yield fetcher aggregates data from multiple protocols for UI display and rate comparison:
+
+| Protocol | Type | Token | Status |
+|----------|------|-------|--------|
+| Morpho Blue | Lending | USDC | Integrated (GraphQL API) |
+| Aave V3 | Lending | USDC | Integrated (GraphQL API) |
+| Moonwell | Lending | USDC | Integrated (Moonwell SDK) |
+
+**Smart Contract Adapters (for actual deposits):**
+
+For MVP, we only build the Morpho adapter since Morpho vaults consistently offer the highest APY (5-7% vs Aave's ~3% and Moonwell's ~5.8%). All Morpho MetaMorpho vaults are ERC-4626 compliant, making integration straightforward.
+
+| Protocol | Adapter | Status |
+|----------|---------|--------|
+| Morpho Blue | `MorphoAdapter.sol` | **Build this** |
+| Aave V3 | — | Skip (lower APY, more complex) |
+| Moonwell | — | Skip (lower APY, Compound-style interface) |
+| Mock Vault | `MockYieldVault.sol` | For testing only |
+
+**Rationale:** Building additional adapters for Aave and Moonwell adds development time for protocols that currently offer lower yields. The UI can still display all three protocols' rates to show the aggregator is "smart" while the contracts only interact with the winning protocol (Morpho).
+
+### 8.4 DEX (Dust Swaps)
+
+| Component | Provider |
+|-----------|----------|
+| Primary Router | Aerodrome |
+| Fallback Router | Uniswap V3 |
+
+### 8.5 Data APIs
+
+**Primary: Direct Protocol APIs (used for yield data)**
+
+| Protocol | API Endpoint | Data |
+|----------|--------------|------|
+| Morpho | `https://blue-api.morpho.org/graphql` | Vault APYs, TVL, rewards, addresses |
+| Aave | `https://api.v3.aave.com/graphql` | Vault APYs, TVL, fees, addresses |
+
+**Secondary: Price Data (for dust valuation)**
+
+| Data | Source |
+|------|--------|
+| Token Prices | DefiLlama `/prices` or Coingecko |
+
+### 8.6 Frontend
+
+| Component | Technology |
+|-----------|------------|
+| Framework | Next.js 14 |
+| Wallet Connection | Coinbase Wallet SDK |
+| Smart Account SDK | ZeroDev SDK |
+| Chain Interaction | viem + wagmi |
+| UI Components | shadcn/ui |
+
+### 8.7 Backend
+
+| Component | Technology |
+|-----------|------------|
+| Runtime | Node.js |
+| Framework | Express or Hono |
+| Database | PostgreSQL (wallet registry) |
+| Cron | node-cron or Vercel Cron |
+| Hosting | Vercel / Railway |
+
+---
+
+## 9. Deliverables & Work Breakdown
+
+### 9.1 Smart Contracts (Jackson)
+
+| ID | Contract | Description | Dependencies |
+|----|----------|-------------|--------------|
+| C1 | `AutoYieldModule.sol` | Core module with all yield logic | IYieldAdapter |
+| C2 | `AutopilotFactory.sol` | Deploys wallets with module installed | Kernel, AutoYieldModule |
+| C3 | `IYieldAdapter.sol` | Interface for vault adapters | — |
+| C4 | `MockYieldVault.sol` | ERC-4626 mock for testing | IYieldAdapter |
+| C5 | `MorphoAdapter.sol` | Adapter for Morpho Blue (ERC-4626) | IYieldAdapter |
+| C6 | Dual-key validation | Configure Kernel for automation key | Kernel |
+
+**Note:** We only build the Morpho adapter for MVP. Morpho MetaMorpho vaults are ERC-4626 compliant and currently offer the best APY (5-7%). The yield aggregator fetches rates from Morpho, Aave, and Moonwell for UI display, but contracts only deposit to Morpho vaults.
+
+**Acceptance Criteria:**
+- Wallet deploys with module pre-installed
+- `executeWithAutoYield` auto-unstakes and re-stakes in one tx
+- `migrateStrategy` moves funds between whitelisted vaults
+- Automation key can only call allowed functions
+- All operations are gasless via paymaster
+
+### 9.2 Backend (Bryce)
+
+| ID | Component | Description | Dependencies |
+|----|-----------|-------------|--------------|
+| B1 | Yield Indexer | Cron polling DefiLlama, stores best vaults | DefiLlama API |
+| B2 | Wallet Registry | Database of deployed wallets | PostgreSQL |
+| B3 | Rebalance Engine | Compares positions, decides migrations | B1, B2 |
+| B4 | UserOp Builder | Builds migrateStrategy userOps | ZeroDev SDK |
+| B5 | Automation Key Manager | Secure key storage and signing | — |
+| B6 | API: `/strategies` | Returns available vaults + APYs | B1 |
+| B7 | API: `/wallet/:address` | Returns wallet state + positions | B2, chain reads |
+| B8 | Dust Token Service | Returns dust token list + metadata | — |
+
+**Acceptance Criteria:**
+- Cron runs every 5-10 minutes
+- Migrations trigger when APY delta > 0.5%
+- UserOps submit successfully to bundler
+- API returns current best vault + APY
+
+### 9.3 Frontend (Logan)
+
+| ID | Page/Feature | Description | Dependencies |
+|----|--------------|-------------|--------------|
+| F1 | Landing Page | Explain product, connect wallet | Coinbase Wallet SDK |
+| F2 | Wallet Creation | Create Autopilot wallet flow | Factory, ZeroDev SDK |
+| F3 | Dashboard | Show checking + yield balances | Chain reads, Backend API |
+| F4 | Settings | Configure threshold, tokens, automation | AutoYieldModule |
+| F5 | Send | Transfer form with executeWithAutoYield | AutoYieldModule |
+| F6 | Transaction History | Show past operations | Chain events |
+| F7 | Yield Display | Show current vault, APY, earnings | Backend API |
+
+**Acceptance Criteria:**
+- Wallet creation in < 3 clicks
+- Dashboard shows accurate balances
+- Payments execute with single signature
+- All operations gasless
+
+### 9.4 Demo Infrastructure (Robby)
+
+| ID | Component | Description |
+|----|-----------|-------------|
+| R1 | Wallet Context | React context for wallet state |
+| R2 | Balance Polling | Real-time balance updates |
+| R3 | Demo Reset Script | Reset wallet state for demos |
+| R4 | Guided Tour | Coach marks explaining UX |
+| R5 | APY Visualization | Chart showing yield over time |
+
+**Acceptance Criteria:**
+- Demo runs start-to-finish in < 3 minutes
+- Reset script works reliably
+- Balance updates reflect on-chain state accurately
+
+---
+
+## 10. Demo Script
+
+### Scene 1: Setup (30 seconds)
+
+1. Show landing page: "Autopilot Wallet — Your money works while you sleep"
+2. Connect Coinbase Wallet
+3. Click "Create Autopilot Wallet"
+4. Sign one message
+5. Show new wallet address
+
+### Scene 2: Fund & Configure (30 seconds)
+
+1. Send 500 USDC from test EOA to Autopilot wallet
+2. Open Settings:
+   - Set threshold: 100 USDC
+   - Enable USDC auto-yield: ✅
+   - Authorize automation: ✅
+3. Sign config transaction
+
+### Scene 3: Watch Auto-Yield (30 seconds)
+
+1. Dashboard shows: 500 USDC in checking
+2. Backend detects deposit
+3. *Animation*: 400 USDC moves to yield
+4. Dashboard now shows:
+   - Checking: 100 USDC
+   - Yield: 400 USDC (Morpho, 5.2% APY)
+5. **"No buttons clicked. No signatures. It just happened."**
+
+### Scene 4: Spend with Auto-Unstake (45 seconds)
+
+1. Go to Send screen
+2. Enter: "Send 150 USDC to 0x..." (any test address)
+3. Click "Send"
+4. Sign once
+5. *Animation shows*:
+   - Module checks balance (100 USDC)
+   - Module calculates deficit (150 + 100 - 100 = 150)
+   - Module withdraws 150 from Morpho
+   - Module sends 150 to recipient
+6. Dashboard shows:
+   - Checking: 100 USDC
+   - Yield: 250 USDC
+7. Show block explorer: transfer confirmed
+8. **"One click. One signature. Auto-unstake + send + maintain threshold."**
+
+### Scene 5: Background Optimization (30 seconds)
+
+1. *Simulate time passing*
+2. Backend logs show:
+   - "Aave APY increased to 5.8%"
+   - "Migration triggered: Morpho → Aave"
+3. Dashboard updates:
+   - Yield: 250 USDC (Aave, 5.8% APY)
+4. **"User was asleep. Funds automatically moved to better yield."**
+
+### Scene 6: Dust Sweep (30 seconds)
+
+1. Send random airdrop tokens to wallet
+2. Dashboard shows dust tokens
+3. Click "Clean Up Wallet"
+4. Sign once
+5. *Animation*: Dust → USDC → Yield
+6. Dashboard: Yield balance increased
+7. **"Trash tokens converted to earning yield. One click."**
+
+### Closing (15 seconds)
+
+- Show block explorer: one transaction for entire payment flow
+- Recap: "Zero gas. Zero manual yield management. True autopilot."
+
+---
+
+## 11. Success Metrics
+
+| Metric | Target |
+|--------|--------|
+| Wallet creation | < 3 clicks, < 30 seconds |
+| Payment with auto-unstake | 1 signature, < 15 seconds |
+| Background rebalance | 0 user actions |
+| Gas cost to user | $0 |
+| Demo completion | < 4 minutes |
+
+---
+
+## 12. Open Questions / Stretch Goals
+
+### Stretch Goals (if time permits)
+
+- [ ] Support WETH auto-yield
+- [ ] LP position support (Aerodrome)
+- [ ] Telegram notifications for rebalances
+- [ ] Historical yield chart
+- [ ] Multiple wallet support per user
+
+### Open Questions
+
+1. ~~**Session key vs. secondary validator?**~~ **RESOLVED:** Using session keys with scoped permissions for automation. See Section 4.2.
+2. **Yield threshold for migration?** Currently 0.5% — should this be configurable per user?
+3. **Dust swap slippage?** What's acceptable for dust consolidation?
+
+---
+
+## Appendix A: Contract Addresses (Base Mainnet)
+
+*To be filled after deployment*
+
+| Contract | Address |
+|----------|---------|
+| KernelFactory | `0x2577507b78c2008Ff367261CB6285d44ba5eF2E9` |
+| ECDSAValidator | `0x845ADb2C711129d4f3966735eD98a9F09fC4cE57` |
+| EntryPoint | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
+| AutopilotFactory | TBD |
+| AutoYieldModule | TBD |
+| AaveV3Adapter | TBD |
+| MorphoAdapter | TBD |
+
+## Appendix B: API Endpoints
+
+### Backend API
+
+```
+GET  /strategies
+     Returns: { vaults: [{ address, protocol, apy, tvl, adapterAddress }] }
+
+GET  /strategies/:token
+     Returns: { bestVault: { ... }, allVaults: [...] }
+
+GET  /wallet/:address
+     Returns: { checking, yield, totalValue, currentVault, automationEnabled }
+
+POST /register
+     Body: { walletAddress, ownerAddress }
+     Returns: { success: true }
+
+GET  /dust-tokens
+     Returns: { tokens: [{ address, symbol, minSweepValue }] }
+```
+
+### Protocol GraphQL APIs (External)
+
+**Morpho Blue API:**
+```
+POST https://blue-api.morpho.org/graphql
+
+# Get USDC address on Base
+query GetChainAsset($chainId: Int!, $assetSymbol: String!) {
+  assets(where: {chainId_in: [$chainId], symbol_in: [$assetSymbol]}) {
+    items { address }
+  }
+}
+
+# List vaults for asset
+query ListVaults($skip: Int!, $chainId: Int!, $assetAddress: String!) {
+  vaults(first: 1000, skip: $skip, where: {...}) {
+    items { name, address, symbol, state { netApy, totalAssetsUsd, rewards {...} } }
+  }
+}
+```
+
+**Aave API:**
+```
+POST https://api.v3.aave.com/graphql
+
+query GetVaults($cursor: Cursor) {
+  vaults(request: { criteria: { ownedBy: [] }, pageSize: FIFTY, cursor: $cursor }) {
+    items { address, shareName, chainId, vaultApr { value }, balance { usd }, usedReserve {...} }
+  }
+}
+```
