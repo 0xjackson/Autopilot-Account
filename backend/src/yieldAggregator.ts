@@ -463,7 +463,7 @@ export async function getBestVaults(
     assetSymbol = "USDC",
     chainId = BASE_CHAIN_ID,
     excludeWarnings = true,
-    minTvlUsd = 0,
+    minTvlUsd = 100000,
     topN,
   } = options;
 

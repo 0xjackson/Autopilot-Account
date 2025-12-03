@@ -1,4 +1,5 @@
 import { Strategy } from "./types";
+import { getAdapterAddress } from "./config/adapterAddresses";
 
 /**
  * Chain IDs for supported networks
@@ -40,6 +41,7 @@ export const strategies: Strategy[] = [
     token: "USDC",
     tokenAddress: TOKEN_ADDRESSES[CHAIN_IDS.BASE_MAINNET].USDC,
     vaultAddress: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5", // Aave aUSDC on Base (placeholder)
+    adapterAddress: getAdapterAddress(CHAIN_IDS.BASE_MAINNET, "aave", "USDC"),
     protocolName: "Aave V3",
     apy: 0.052, // 5.2% APY (mocked)
     riskTier: "low",
@@ -51,6 +53,7 @@ export const strategies: Strategy[] = [
     token: "USDC",
     tokenAddress: TOKEN_ADDRESSES[CHAIN_IDS.BASE_MAINNET].USDC,
     vaultAddress: "0xEdc817A28E8B93B03976FBd4a3dDBc9f7D176c22", // Moonwell mUSDC (placeholder)
+    adapterAddress: getAdapterAddress(CHAIN_IDS.BASE_MAINNET, "moonwell", "USDC"),
     protocolName: "Moonwell",
     apy: 0.078, // 7.8% APY (mocked)
     riskTier: "low",
@@ -62,6 +65,7 @@ export const strategies: Strategy[] = [
     token: "USDC",
     tokenAddress: TOKEN_ADDRESSES[CHAIN_IDS.BASE_MAINNET].USDC,
     vaultAddress: "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf", // Compound cUSDCv3 (placeholder)
+    adapterAddress: "0xAdapterCompoundUSDC0000000000000000000", // No Compound adapter yet
     protocolName: "Compound V3",
     apy: 0.061, // 6.1% APY (mocked)
     riskTier: "low",
@@ -73,6 +77,7 @@ export const strategies: Strategy[] = [
     token: "USDC",
     tokenAddress: TOKEN_ADDRESSES[CHAIN_IDS.BASE_MAINNET].USDC,
     vaultAddress: "0x1234567890123456789012345678901234567890", // Mock vault
+    adapterAddress: "0xAdapterMockVaultUSDC00000000000000000", // Mock adapter
     protocolName: "MockYieldVault",
     apy: 0.15, // 15% APY (mocked - for demo)
     riskTier: "high",
@@ -84,6 +89,7 @@ export const strategies: Strategy[] = [
     token: "USDC",
     tokenAddress: TOKEN_ADDRESSES[CHAIN_IDS.BASE_MAINNET].USDC,
     vaultAddress: "0x0000000000000000000000000000000000000001",
+    adapterAddress: "0xAdapterDeprecated000000000000000000000",
     protocolName: "DeprecatedVault",
     apy: 0.20, // High APY but inactive
     riskTier: "high",
@@ -97,6 +103,7 @@ export const strategies: Strategy[] = [
     token: "WETH",
     tokenAddress: TOKEN_ADDRESSES[CHAIN_IDS.BASE_MAINNET].WETH,
     vaultAddress: "0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7", // Aave aWETH (placeholder)
+    adapterAddress: getAdapterAddress(CHAIN_IDS.BASE_MAINNET, "aave", "WETH"),
     protocolName: "Aave V3",
     apy: 0.021, // 2.1% APY (mocked)
     riskTier: "low",
@@ -108,6 +115,7 @@ export const strategies: Strategy[] = [
     token: "WETH",
     tokenAddress: TOKEN_ADDRESSES[CHAIN_IDS.BASE_MAINNET].WETH,
     vaultAddress: "0x628ff693426583D9a7FB391E54366292F509D457", // Moonwell mWETH (placeholder)
+    adapterAddress: getAdapterAddress(CHAIN_IDS.BASE_MAINNET, "moonwell", "WETH"),
     protocolName: "Moonwell",
     apy: 0.032, // 3.2% APY (mocked)
     riskTier: "low",
@@ -121,6 +129,7 @@ export const strategies: Strategy[] = [
     token: "USDC",
     tokenAddress: TOKEN_ADDRESSES[CHAIN_IDS.BASE_SEPOLIA].USDC,
     vaultAddress: "0xABCDEF1234567890ABCDEF1234567890ABCDEF12", // Mock vault for testnet
+    adapterAddress: getAdapterAddress(CHAIN_IDS.BASE_SEPOLIA, "morpho", "USDC"),
     protocolName: "MockYieldVault",
     apy: 0.12, // 12% APY (mocked)
     riskTier: "med",
@@ -132,6 +141,7 @@ export const strategies: Strategy[] = [
     token: "USDC",
     tokenAddress: TOKEN_ADDRESSES[CHAIN_IDS.BASE_SEPOLIA].USDC,
     vaultAddress: "0xFEDCBA0987654321FEDCBA0987654321FEDCBA09", // Another test vault
+    adapterAddress: getAdapterAddress(CHAIN_IDS.BASE_SEPOLIA, "aave", "USDC"),
     protocolName: "TestVault",
     apy: 0.08, // 8% APY (mocked)
     riskTier: "low",

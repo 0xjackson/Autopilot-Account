@@ -32,6 +32,10 @@ import {
   isValidConsolidationSymbol,
   DEFAULT_DUST_CHAIN_ID,
 } from "./dustService";
+import {
+  refreshLiveStrategies,
+  getCacheStatus,
+} from "./liveStrategyStore";
 import { isValidWalletAddress as isValidWallet } from "./scheduler";
 import {
   startScheduler,
@@ -153,6 +157,8 @@ app.get("/", (_req: Request, res: Response) => {
       "/dust/tokens",
       "/dust/config",
       "/dust/summary",
+      "/admin/refresh-strategies",
+      "/admin/cache-status",
     ],
     scheduler: getSchedulerStatus(),
   });
@@ -174,7 +180,7 @@ app.get("/health", (_req: Request, res: Response) => {
  *   - token: string (optional, default "USDC")
  *   - chainId: number (optional, default 8453)
  */
-app.get("/strategies", (req: Request, res: Response) => {
+app.get("/strategies", async (req: Request, res: Response) => {
   const token = parseToken(req.query.token);
   const chainId = parseChainId(req.query.chainId);
 
@@ -186,15 +192,25 @@ app.get("/strategies", (req: Request, res: Response) => {
     return res.status(400).json(errorResponse);
   }
 
-  const strategies = getStrategiesForToken(token, chainId);
+  try {
+    const result = await getStrategiesForToken(token, chainId);
 
-  const response: StrategiesResponse = {
-    token,
-    chainId,
-    strategies,
-  };
+    const response: StrategiesResponse = {
+      token,
+      chainId,
+      strategies: result.strategies,
+      metadata: result.metadata,
+    };
 
-  return res.json(response);
+    return res.json(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[/strategies] Error:`, message);
+    const errorResponse: ErrorResponse = {
+      error: `Failed to fetch strategies: ${message}`,
+    };
+    return res.status(500).json(errorResponse);
+  }
 });
 
 /**
@@ -205,7 +221,7 @@ app.get("/strategies", (req: Request, res: Response) => {
  *   - token: string (optional, default "USDC")
  *   - chainId: number (optional, default 8453)
  */
-app.get("/recommend", (req: Request, res: Response) => {
+app.get("/recommend", async (req: Request, res: Response) => {
   const token = parseToken(req.query.token);
   const chainId = parseChainId(req.query.chainId);
 
@@ -217,22 +233,32 @@ app.get("/recommend", (req: Request, res: Response) => {
     return res.status(400).json(errorResponse);
   }
 
-  const strategy = getBestStrategy(token, chainId);
+  try {
+    const result = await getBestStrategy(token, chainId);
 
-  if (!strategy) {
-    const errorResponse: ErrorResponse = {
-      error: "No strategies found",
+    if (!result.strategy) {
+      const errorResponse: ErrorResponse = {
+        error: "No strategies found",
+      };
+      return res.status(404).json(errorResponse);
+    }
+
+    const response: RecommendResponse = {
+      token,
+      chainId,
+      strategy: result.strategy,
+      metadata: result.metadata,
     };
-    return res.status(404).json(errorResponse);
+
+    return res.json(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[/recommend] Error:`, message);
+    const errorResponse: ErrorResponse = {
+      error: `Failed to fetch recommendation: ${message}`,
+    };
+    return res.status(500).json(errorResponse);
   }
-
-  const response: RecommendResponse = {
-    token,
-    chainId,
-    strategy,
-  };
-
-  return res.json(response);
 });
 
 /**
@@ -253,21 +279,13 @@ app.get("/recommend", (req: Request, res: Response) => {
  *   - strategies: All matching strategies sorted by score
  *   - preferences: The preferences used for filtering
  *   - totalAvailable: Total strategies before filtering
+ *   - metadata: Data source and freshness info
  */
-app.get("/recommendations", (req: Request, res: Response) => {
+app.get("/recommendations", async (req: Request, res: Response) => {
   const token = parseToken(req.query.token);
   const chainId = parseChainId(req.query.chainId);
   const riskTolerance = parseRiskTolerance(req.query.riskTolerance);
   const minApy = parseMinApy(req.query.minApy);
-
-  // TODO: Future wallet-specific preferences
-  // const wallet = req.query.wallet as string | undefined;
-  // if (wallet) {
-  //   const walletPrefs = await getWalletPreferences(wallet);
-  //   if (walletPrefs) {
-  //     // Merge wallet preferences with query params (query params take precedence)
-  //   }
-  // }
 
   // Validate chainId
   if (chainId === null) {
@@ -295,29 +313,39 @@ app.get("/recommendations", (req: Request, res: Response) => {
     return res.status(400).json(errorResponse);
   }
 
-  const result = getRecommendedStrategies(token, chainId, riskTolerance, minApy);
+  try {
+    const result = await getRecommendedStrategies(token, chainId, riskTolerance, minApy);
 
-  // Return 404 if no strategies match preferences
-  if (result.strategies.length === 0) {
-    const errorResponse: ErrorResponse = {
-      error: "No strategies match preferences",
+    // Return 404 if no strategies match preferences
+    if (result.strategies.length === 0) {
+      const errorResponse: ErrorResponse = {
+        error: "No strategies match preferences",
+      };
+      return res.status(404).json(errorResponse);
+    }
+
+    const response: RecommendationsResponse = {
+      token,
+      chainId,
+      preferences: {
+        riskTolerance,
+        minApy,
+      },
+      bestStrategy: result.bestStrategy,
+      strategies: result.strategies,
+      totalAvailable: result.totalAvailable,
+      metadata: result.metadata,
     };
-    return res.status(404).json(errorResponse);
+
+    return res.json(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[/recommendations] Error:`, message);
+    const errorResponse: ErrorResponse = {
+      error: `Failed to fetch recommendations: ${message}`,
+    };
+    return res.status(500).json(errorResponse);
   }
-
-  const response: RecommendationsResponse = {
-    token,
-    chainId,
-    preferences: {
-      riskTolerance,
-      minApy,
-    },
-    bestStrategy: result.bestStrategy,
-    strategies: result.strategies,
-    totalAvailable: result.totalAvailable,
-  };
-
-  return res.json(response);
 });
 
 /**
@@ -736,6 +764,91 @@ app.get("/dust/summary", (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// Admin: Live Strategy Cache
+// ============================================================================
+
+/**
+ * POST /admin/refresh-strategies
+ * Force refresh the live strategy cache for a chain
+ *
+ * Body (optional):
+ *   - chainId: number (default 8453)
+ *
+ * Returns:
+ *   - chainId: number
+ *   - fetchedAt: ISO date string
+ *   - expiresAt: ISO date string
+ *   - count: number of strategies cached
+ */
+app.post("/admin/refresh-strategies", async (req: Request, res: Response) => {
+  const chainIdParam = req.body?.chainId;
+  const chainId = chainIdParam !== undefined ? parseChainId(chainIdParam) : DEFAULTS.CHAIN_ID;
+
+  if (chainId === null) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid chainId. Must be a positive integer.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  try {
+    const result = await refreshLiveStrategies(chainId);
+
+    return res.json({
+      chainId,
+      fetchedAt: result.metadata.fetchedAt.toISOString(),
+      expiresAt: result.metadata.expiresAt.toISOString(),
+      count: result.strategies.length,
+      errors: result.errors.length > 0 ? result.errors : undefined,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[admin/refresh-strategies] Error:`, message);
+
+    const errorResponse: ErrorResponse = {
+      error: `Failed to refresh strategies: ${message}`,
+    };
+    return res.status(500).json(errorResponse);
+  }
+});
+
+/**
+ * GET /admin/cache-status
+ * Get the current cache status for a chain
+ *
+ * Query params:
+ *   - chainId: number (optional, default 8453)
+ */
+app.get("/admin/cache-status", (req: Request, res: Response) => {
+  const chainId = parseChainId(req.query.chainId);
+
+  if (chainId === null) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid chainId parameter. Must be a positive integer.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  const status = getCacheStatus(chainId);
+
+  if (!status) {
+    return res.json({
+      chainId,
+      cached: false,
+      message: "No cache entry exists for this chain",
+    });
+  }
+
+  return res.json({
+    chainId,
+    cached: true,
+    isFresh: status.isFresh,
+    expiresAt: status.expiresAt.toISOString(),
+    strategyCount: status.strategyCount,
+  });
+});
+
+// ============================================================================
 // Error handling
 // ============================================================================
 
@@ -784,6 +897,9 @@ app.listen(PORT, () => {
 ║    GET  /dust/tokens         - List dust tokens           ║
 ║    GET  /dust/config         - Get dust sweep config      ║
 ║    GET  /dust/summary        - Wallet dust summary (stub) ║
+║  Admin:                                                   ║
+║    POST /admin/refresh-strategies - Refresh strategy cache║
+║    GET  /admin/cache-status  - Check cache status         ║
 ╚═══════════════════════════════════════════════════════════╝
   `);
 

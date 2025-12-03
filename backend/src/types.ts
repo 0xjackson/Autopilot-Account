@@ -29,6 +29,13 @@ export type Strategy = {
   /** Contract address of the vault/strategy where funds are deposited */
   vaultAddress: string;
 
+  /**
+   * Contract address of the IYieldAdapter that wraps this vault
+   * Used by AutoYieldModule to interact with the underlying protocol
+   * NOTE: Placeholder addresses (0xAdapter...) until real adapters are deployed
+   */
+  adapterAddress?: string;
+
   /** Human-readable name of the protocol, e.g. "Aave", "Moonwell" */
   protocolName: string;
 
@@ -43,12 +50,29 @@ export type Strategy = {
 };
 
 /**
+ * Data source for strategy data
+ * - "live": Fetched from real protocol APIs (Morpho, Aave, Moonwell)
+ * - "mock": Static fallback data from strategies.ts
+ */
+export type DataSource = "live" | "mock";
+
+/**
+ * Metadata about strategy data freshness
+ */
+export type StrategyMetadata = {
+  dataSource: DataSource;
+  fetchedAt?: string;
+  expiresAt?: string;
+};
+
+/**
  * Response shape for GET /strategies endpoint
  */
 export type StrategiesResponse = {
   token: string;
   chainId: number;
   strategies: Strategy[];
+  metadata: StrategyMetadata;
 };
 
 /**
@@ -58,6 +82,7 @@ export type RecommendResponse = {
   token: string;
   chainId: number;
   strategy: Strategy;
+  metadata: StrategyMetadata;
 };
 
 /**
@@ -108,6 +133,8 @@ export type RecommendationsResponse = {
   strategies: ScoredStrategy[];
   /** Total number of strategies before filtering */
   totalAvailable: number;
+  /** Metadata about data source and freshness */
+  metadata: StrategyMetadata;
 };
 
 // TODO: Future types for wallet-specific preferences (B2+)

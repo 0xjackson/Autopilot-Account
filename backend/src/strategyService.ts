@@ -1,5 +1,8 @@
-import { Strategy, RiskTier, ScoredStrategy, StrategyPreferences } from "./types";
-import { strategies, CHAIN_IDS } from "./strategies";
+import { Strategy, RiskTier, ScoredStrategy, StrategyPreferences, DataSource, StrategyMetadata } from "./types";
+import { strategies as mockStrategies, CHAIN_IDS } from "./strategies";
+import { getCachedStrategies, getExecutableStrategies, LiveStrategyResult } from "./liveStrategyStore";
+import { Vault } from "./yieldAggregator";
+import { getAdapterAddress, ProtocolSource } from "./config/adapterAddresses";
 
 /**
  * Default values for API parameters
@@ -10,6 +13,40 @@ export const DEFAULTS = {
   RISK_TOLERANCE: "med" as RiskTier,
   MIN_APY: 0,
 } as const;
+
+/**
+ * Convert a Vault from yieldAggregator to a Strategy
+ */
+function vaultToStrategy(vault: Vault): Strategy {
+  // Determine risk tier based on source
+  let riskTier: RiskTier = "med";
+  if (vault.source === "aave" || vault.source === "moonwell") {
+    riskTier = "low";
+  } else if (vault.source === "morpho") {
+    // Morpho vaults can vary - use TVL as a heuristic
+    riskTier = vault.tvlUsd > 1_000_000 ? "low" : "med";
+  }
+
+  // Get the adapter address for this protocol/asset combination
+  const adapterAddress = getAdapterAddress(
+    vault.chainId,
+    vault.source as ProtocolSource,
+    vault.underlyingAsset
+  );
+
+  return {
+    id: `${vault.source}-${vault.symbol}-${vault.chainId}`.toLowerCase(),
+    chainId: vault.chainId,
+    token: vault.underlyingAsset,
+    tokenAddress: vault.underlyingAssetAddress,
+    vaultAddress: vault.address,
+    adapterAddress,
+    protocolName: vault.source.charAt(0).toUpperCase() + vault.source.slice(1),
+    apy: vault.apy,
+    riskTier,
+    isActive: true,
+  };
+}
 
 /**
  * Risk tier ordering for comparison
@@ -28,52 +65,132 @@ export const RISK_ORDER: Record<RiskTier, number> = {
 const RISK_PENALTY_PER_LEVEL = 2;
 
 /**
- * Get all active strategies for a given token and chain, sorted by APY descending
- *
- * @param token - Token symbol (case-insensitive), e.g. "USDC"
- * @param chainId - Chain ID, e.g. 8453 for Base mainnet
- * @returns Array of strategies sorted by APY (highest first)
+ * Result type for strategy fetch operations
  */
-export function getStrategiesForToken(
-  token: string,
-  chainId: number
-): Strategy[] {
-  const normalizedToken = token.toUpperCase();
+export interface StrategyFetchResult {
+  strategies: Strategy[];
+  metadata: StrategyMetadata;
+}
 
-  return strategies
+/**
+ * Get mock strategies as fallback
+ */
+function getMockStrategiesForToken(token: string, chainId: number): Strategy[] {
+  const normalizedToken = token.toUpperCase();
+  return mockStrategies
     .filter(
       (s) =>
         s.token.toUpperCase() === normalizedToken &&
         s.chainId === chainId &&
         s.isActive
     )
-    .sort((a, b) => b.apy - a.apy); // Sort by APY descending
+    .sort((a, b) => b.apy - a.apy);
+}
+
+/**
+ * Get all active strategies for a given token and chain, sorted by APY descending
+ *
+ * Fetches live data from protocol APIs with fallback to mock data if unavailable.
+ *
+ * @param token - Token symbol (case-insensitive), e.g. "USDC"
+ * @param chainId - Chain ID, e.g. 8453 for Base mainnet
+ * @returns Object with strategies array and metadata about data source
+ */
+export async function getStrategiesForToken(
+  token: string,
+  chainId: number
+): Promise<StrategyFetchResult> {
+  const normalizedToken = token.toUpperCase();
+
+  try {
+    // Try to get live data
+    const liveResult = await getCachedStrategies(chainId);
+
+    // Convert vaults to strategies and filter by token
+    const liveStrategies = liveResult.strategies
+      .filter((v) => v.underlyingAsset.toUpperCase() === normalizedToken)
+      .map(vaultToStrategy)
+      .sort((a, b) => b.apy - a.apy);
+
+    // If we got live data, return it
+    if (liveStrategies.length > 0) {
+      console.log(
+        `[strategyService] Using live data: ${liveStrategies.length} strategies for ${token} on chain ${chainId}`
+      );
+      return {
+        strategies: liveStrategies,
+        metadata: {
+          dataSource: "live",
+          fetchedAt: liveResult.metadata.fetchedAt.toISOString(),
+          expiresAt: liveResult.metadata.expiresAt.toISOString(),
+        },
+      };
+    }
+
+    // Live returned empty - fall back to mock
+    console.warn(
+      `[strategyService] Live data empty for ${token} on chain ${chainId}, falling back to mock`
+    );
+  } catch (error) {
+    // Live fetch failed - fall back to mock
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[strategyService] Live fetch failed for chain ${chainId}: ${message}, falling back to mock`
+    );
+  }
+
+  // Return mock data as fallback
+  const mockData = getMockStrategiesForToken(normalizedToken, chainId);
+  console.log(
+    `[strategyService] Using mock data: ${mockData.length} strategies for ${token} on chain ${chainId}`
+  );
+
+  return {
+    strategies: mockData,
+    metadata: {
+      dataSource: "mock",
+    },
+  };
+}
+
+/**
+ * Result type for best strategy fetch
+ */
+export interface BestStrategyResult {
+  strategy: Strategy | undefined;
+  metadata: StrategyMetadata;
 }
 
 /**
  * Get the single best (highest APY) strategy for a given token and chain
  *
+ * Fetches live data from protocol APIs with fallback to mock data if unavailable.
+ *
  * @param token - Token symbol (case-insensitive), e.g. "USDC"
  * @param chainId - Chain ID, e.g. 8453 for Base mainnet
- * @returns The highest APY strategy, or undefined if none found
+ * @returns Object with best strategy and metadata about data source
  */
-export function getBestStrategy(
+export async function getBestStrategy(
   token: string,
   chainId: number
-): Strategy | undefined {
-  const sorted = getStrategiesForToken(token, chainId);
-  return sorted.length > 0 ? sorted[0] : undefined;
+): Promise<BestStrategyResult> {
+  const result = await getStrategiesForToken(token, chainId);
+  return {
+    strategy: result.strategies.length > 0 ? result.strategies[0] : undefined,
+    metadata: result.metadata,
+  };
 }
 
 /**
  * Get all unique tokens that have active strategies on a given chain
+ * Uses mock data as the authoritative list of supported tokens
  *
  * @param chainId - Chain ID to filter by
  * @returns Array of unique token symbols
  */
 export function getAvailableTokens(chainId: number): string[] {
   const tokens = new Set<string>();
-  strategies
+  mockStrategies
     .filter((s) => s.chainId === chainId && s.isActive)
     .forEach((s) => tokens.add(s.token));
   return Array.from(tokens);
@@ -81,12 +198,13 @@ export function getAvailableTokens(chainId: number): string[] {
 
 /**
  * Get all supported chain IDs that have active strategies
+ * Uses mock data as the authoritative list of supported chains
  *
  * @returns Array of unique chain IDs
  */
 export function getSupportedChainIds(): number[] {
   const chainIds = new Set<number>();
-  strategies.filter((s) => s.isActive).forEach((s) => chainIds.add(s.chainId));
+  mockStrategies.filter((s) => s.isActive).forEach((s) => chainIds.add(s.chainId));
   return Array.from(chainIds);
 }
 
@@ -131,7 +249,19 @@ export function isWithinRiskTolerance(
 }
 
 /**
+ * Result type for recommended strategies fetch
+ */
+export interface RecommendedStrategiesResult {
+  strategies: ScoredStrategy[];
+  bestStrategy: ScoredStrategy | null;
+  totalAvailable: number;
+  metadata: StrategyMetadata;
+}
+
+/**
  * Get recommended strategies filtered by user preferences and scored
+ *
+ * Fetches live data from protocol APIs with fallback to mock data if unavailable.
  *
  * @param token - Token symbol (case-insensitive), e.g. "USDC"
  * @param chainId - Chain ID, e.g. 8453 for Base mainnet
@@ -139,18 +269,15 @@ export function isWithinRiskTolerance(
  * @param minApy - Minimum acceptable APY as decimal (e.g., 0.05 for 5%)
  * @returns Object with scored strategies sorted by score, best strategy, and metadata
  */
-export function getRecommendedStrategies(
+export async function getRecommendedStrategies(
   token: string,
   chainId: number,
   riskTolerance: RiskTier = DEFAULTS.RISK_TOLERANCE,
   minApy: number = DEFAULTS.MIN_APY
-): {
-  strategies: ScoredStrategy[];
-  bestStrategy: ScoredStrategy | null;
-  totalAvailable: number;
-} {
+): Promise<RecommendedStrategiesResult> {
   // Get all active strategies for this token/chain
-  const allStrategies = getStrategiesForToken(token, chainId);
+  const fetchResult = await getStrategiesForToken(token, chainId);
+  const allStrategies = fetchResult.strategies;
   const totalAvailable = allStrategies.length;
 
   // Filter by risk tolerance and minimum APY
@@ -170,6 +297,7 @@ export function getRecommendedStrategies(
     strategies: scored,
     bestStrategy: scored.length > 0 ? scored[0] : null,
     totalAvailable,
+    metadata: fetchResult.metadata,
   };
 }
 
@@ -178,6 +306,103 @@ export function getRecommendedStrategies(
  */
 export function isValidRiskTier(value: string): value is RiskTier {
   return value === "low" || value === "med" || value === "high";
+}
+
+// =============================================================================
+// Executable Strategies (Morpho-only for scheduler)
+// =============================================================================
+
+/**
+ * Get recommended strategies limited to protocols with deployed adapters.
+ * Currently only Morpho has adapters, so this filters to Morpho-only strategies.
+ * Used by the scheduler for actual execution; UI endpoints use getRecommendedStrategies.
+ *
+ * @param token - Token symbol (case-insensitive), e.g. "USDC"
+ * @param chainId - Chain ID, e.g. 8453 for Base mainnet
+ * @param riskTolerance - Maximum risk level user will accept
+ * @param minApy - Minimum acceptable APY as decimal (e.g., 0.05 for 5%)
+ * @returns Object with scored Morpho-only strategies
+ */
+export async function getExecutableRecommendedStrategies(
+  token: string,
+  chainId: number,
+  riskTolerance: RiskTier = DEFAULTS.RISK_TOLERANCE,
+  minApy: number = DEFAULTS.MIN_APY
+): Promise<RecommendedStrategiesResult> {
+  const normalizedToken = token.toUpperCase();
+
+  try {
+    // Get executable strategies only (Morpho for now)
+    const liveResult = await getExecutableStrategies(chainId);
+
+    // Convert vaults to strategies and filter by token
+    const liveStrategies = liveResult.strategies
+      .filter((v) => v.underlyingAsset.toUpperCase() === normalizedToken)
+      .map(vaultToStrategy);
+
+    const totalAvailable = liveStrategies.length;
+
+    // Filter by risk tolerance and minimum APY
+    const filtered = liveStrategies.filter(
+      (s) => isWithinRiskTolerance(s.riskTier, riskTolerance) && s.apy >= minApy
+    );
+
+    // Score and sort strategies
+    const scored: ScoredStrategy[] = filtered
+      .map((s) => ({
+        ...s,
+        score: calculateStrategyScore(s),
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    console.log(
+      `[strategyService] Executable strategies (Morpho-only): ${scored.length} for ${token} on chain ${chainId}`
+    );
+
+    return {
+      strategies: scored,
+      bestStrategy: scored.length > 0 ? scored[0] : null,
+      totalAvailable,
+      metadata: {
+        dataSource: "live",
+        fetchedAt: liveResult.metadata.fetchedAt.toISOString(),
+        expiresAt: liveResult.metadata.expiresAt.toISOString(),
+      },
+    };
+  } catch (error) {
+    // Fallback to mock Morpho-only strategies
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[strategyService] Executable strategies fetch failed: ${message}, falling back to mock`
+    );
+
+    // Filter mock strategies to Morpho-like protocols only
+    const mockExecutable = mockStrategies.filter(
+      (s) =>
+        s.token.toUpperCase() === normalizedToken &&
+        s.chainId === chainId &&
+        s.isActive &&
+        s.protocolName.toLowerCase().includes("morpho")
+    );
+
+    const filtered = mockExecutable.filter(
+      (s) => isWithinRiskTolerance(s.riskTier, riskTolerance) && s.apy >= minApy
+    );
+
+    const scored: ScoredStrategy[] = filtered
+      .map((s) => ({
+        ...s,
+        score: calculateStrategyScore(s),
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    return {
+      strategies: scored,
+      bestStrategy: scored.length > 0 ? scored[0] : null,
+      totalAvailable: mockExecutable.length,
+      metadata: { dataSource: "mock" },
+    };
+  }
 }
 
 // TODO: Future implementation for wallet-specific preferences
