@@ -78,13 +78,112 @@ A smart wallet on Base that automatically optimizes your idle capital — keepin
 | Concept | Description |
 |---------|-------------|
 | **Smart Account (4337)** | A contract wallet that can execute complex logic, batch operations, and be gasless via paymaster. Uses ZeroDev Kernel v3. |
-| **Owner Key** | The user's EOA. Can do anything: spend, configure, withdraw. Signs normal transactions. |
-| **Automation Key** | A backend-controlled key with strict limits. Can ONLY call `rebalance()`, `migrateStrategy()`, and `sweepDustAndCompound()`. Cannot transfer funds out. |
+| **Owner Key** | The user's EOA (MetaMask, Coinbase Wallet). Used for SIGNING only — proves identity. Does not hold user funds. |
+| **Automation Key (Session Key)** | A backend-controlled key with strict limits. Can ONLY call `rebalance()`, `migrateStrategy()`, and `sweepDustAndCompound()`. Cannot transfer funds out. Implemented as a session key with scoped permissions. |
 | **AutoYieldModule (7579)** | The brain of the wallet. Stores user config, executes yield logic, validates automation key permissions. |
 | **Checking Threshold** | Minimum balance to keep liquid (e.g., 100 USDC). Everything above goes to yield. |
-| **Yield Adapter** | Contract that wraps a specific vault (ERC-4626) with a standard interface. |
+| **Yield Adapter** | A translation layer contract that converts our standard interface (`deposit`/`withdraw`/`totalValue`) to a specific protocol's interface (Aave, Morpho, etc.). Does NOT mock or replace real vaults — it connects to them. |
 | **Backend Optimizer** | Cron service that monitors yields, compares to user positions, and submits rebalance operations. |
 | **Paymaster** | Sponsors gas for all wallet operations. User never needs ETH. |
+
+---
+
+## 3.1 Critical Architecture Clarification: EOA vs Smart Wallet
+
+**The smart wallet holds all funds. The EOA is only used for signing.**
+
+This is a key concept that can be confusing:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     USER'S WALLET SETUP                              │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   EOA (User's MetaMask / Coinbase Wallet)                           │
+│   ───────────────────────────────────────                           │
+│   Address: 0xUser123...                                              │
+│   Purpose: SIGNING ONLY (proves "I am the owner")                   │
+│   Holds: Nothing (or minimal ETH, but not needed with paymaster)    │
+│   Role: Signs UserOperations to authorize transactions              │
+│                                                                      │
+│                         │                                            │
+│                         │ signs transactions                         │
+│                         ▼                                            │
+│                                                                      │
+│   Smart Wallet (Autopilot Wallet - Kernel Account)                  │
+│   ────────────────────────────────────────────────                  │
+│   Address: 0xSmartWallet456...                                       │
+│   Purpose: HOLDS ALL USER FUNDS                                      │
+│   Holds: USDC, yield positions, dust tokens, everything             │
+│   Role: Executes transactions when owner's signature is valid       │
+│   Features: Gasless, batching, auto-yield, session keys             │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Why not just use the EOA directly?**
+
+Because EOAs can't do the features we need:
+
+| Feature | EOA (MetaMask) | Smart Wallet |
+|---------|----------------|--------------|
+| Hold funds | ✓ | ✓ |
+| Gasless transactions | ✗ | ✓ (paymaster) |
+| Auto-withdraw from yield when spending | ✗ | ✓ (module logic) |
+| Batch multiple actions in one tx | ✗ | ✓ |
+| Session keys for automation | ✗ | ✓ |
+| Social recovery | ✗ | ✓ |
+
+**The EOA is like a signature/ID card. The smart wallet is like a bank account.**
+
+You don't keep cash in your signature. You use your signature to authorize transactions from your bank account.
+
+---
+
+## 3.2 What Are Yield Adapters? (Not Mocks)
+
+**Adapters are translation layers, not mock vaults.**
+
+Real yield vaults (Aave, Morpho) are **already deployed on Base** by their respective teams. They hold billions in TVL. We don't create or mock them.
+
+What we create are **adapters** — small contracts that translate OUR standard interface to THEIR specific interface:
+
+```
+AutoYieldModule (our code)
+         │
+         │ Calls: adapter.deposit(USDC, 1000)
+         │        adapter.withdraw(USDC, 500)
+         │        adapter.totalValue(USDC, account)
+         │
+         ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                      ADAPTERS (our code)                     │
+    │                                                              │
+    │   ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+    │   │AaveV3Adapter│  │MorphoAdapter│  │ MockYieldVault      │ │
+    │   │             │  │             │  │ (for testing only)  │ │
+    │   │ Translates: │  │ Translates: │  │                     │ │
+    │   │ deposit() → │  │ deposit() → │  │ Fake vault we       │ │
+    │   │ aave.supply │  │ morpho.     │  │ control for demos   │ │
+    │   │             │  │ supply()    │  │                     │ │
+    │   └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘ │
+    └──────────┼────────────────┼────────────────────┼────────────┘
+               │                │                    │
+               ▼                ▼                    ▼
+         ┌──────────┐    ┌──────────┐         ┌──────────┐
+         │ Aave V3  │    │ Morpho   │         │ Mock     │
+         │ on Base  │    │ on Base  │         │ Contract │
+         │ (REAL)   │    │ (REAL)   │         │ (FAKE)   │
+         │ $2B+ TVL │    │ $1B+ TVL │         │ for demo │
+         └──────────┘    └──────────┘         └──────────┘
+```
+
+**MockYieldVault** exists only for:
+- Development without needing testnet tokens
+- Hackathon demos where you want to instantly "simulate" yield accrual
+- Unit testing
+
+For production (and ideally the hackathon demo), you use real adapters pointing to real protocols.
 
 ---
 
@@ -169,7 +268,29 @@ A smart wallet on Base that automatically optimizes your idle capital — keepin
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.2 Dual-Key Validation Model
+### 4.2 Dual-Key Validation Model (Session Keys)
+
+The automation key is implemented as a **Session Key** — a cryptographically restricted key that can only perform specific actions. This allows the backend to automate yield optimization without the user needing to approve each transaction, while ensuring the backend can never steal funds.
+
+**How Session Keys Work:**
+
+When the backend's session key is created, it's registered on-chain with explicit permissions:
+
+```
+Session Key Permissions (set once during wallet setup):
+───────────────────────────────────────────────────────
+✓ Can call: AutoYieldModule.rebalance()
+✓ Can call: AutoYieldModule.migrateStrategy()
+    BUT only to these adapters: [AaveAdapter, MorphoAdapter]
+✓ Can call: AutoYieldModule.sweepDustAndCompound()
+
+✗ Cannot call: transfer()
+✗ Cannot call: executeWithAutoYield()
+✗ Cannot call: any configuration functions
+✗ Cannot call: anything else
+```
+
+The smart wallet **enforces these rules on-chain**. Even if a hacker steals the session key, they can only call those specific functions.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -189,11 +310,11 @@ A smart wallet on Base that automatically optimizes your idle capital — keepin
 │  │  • sweepDustAndCompound() - manual dust sweep                │    │
 │  │  • flushToChecking() - emergency withdraw all from yield     │    │
 │  │                                                              │    │
-│  │  Signing: User signs each transaction                        │    │
+│  │  Signing: MetaMask/Coinbase Wallet popup, user approves      │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                      │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │                  AUTOMATION KEY (Backend)                    │    │
+│  │              SESSION KEY (Backend Automation)                │    │
 │  │                                                              │    │
 │  │  Permissions: RESTRICTED (yield operations only)             │    │
 │  │  • rebalance() - deposit excess into yield                   │    │
@@ -207,13 +328,32 @@ A smart wallet on Base that automatically optimizes your idle capital — keepin
 │  │  ✗ addAllowedAdapter() - cannot add new vaults               │    │
 │  │  ✗ Any call to non-whitelisted addresses                     │    │
 │  │                                                              │    │
-│  │  Signing: Backend signs automatically, no user interaction   │    │
+│  │  Signing: Backend signs automatically, NO user interaction   │    │
+│  │  User is never prompted — automation happens silently.       │    │
 │  │                                                              │    │
 │  │  Safety: Even if compromised, can only move funds between    │    │
 │  │          pre-approved vaults. Cannot drain wallet.           │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
+```
+
+**Security: What If Session Key Is Compromised?**
+
+```
+Scenario: Hacker steals the backend's session key
+
+Hacker tries: transfer(USDC, hackerAddress, allFunds)
+  → Smart wallet: "Is transfer() allowed for session key? NO"
+  → Transaction REVERTS — hacker gets nothing
+
+Hacker tries: migrateStrategy(USDC, hackerControlledVault)
+  → Smart wallet: "Is hackerControlledVault in allowedAdapters? NO"
+  → Transaction REVERTS — hacker gets nothing
+
+What hacker CAN do: migrateStrategy(USDC, morphoAdapter)
+  → Funds move from Aave to Morpho (both legitimate vaults)
+  → User's funds are SAFE — just in a different pre-approved vault
 ```
 
 ### 4.3 Data Flow: User Spending
@@ -606,10 +746,10 @@ interface IYieldAdapter {
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  Yield Indexer (Cron: every 5 min)                     │ │
-│  │  • Fetch /yields/pools from DefiLlama                  │ │
-│  │  • Filter: chain=Base, stablecoin=true                 │ │
-│  │  • Rank by APY, filter by TVL minimum                  │ │
+│  │  Yield Aggregator (Cron: every 5 min)                  │ │
+│  │  • Query Morpho GraphQL API directly                   │ │
+│  │  • Query Aave GraphQL API directly                     │ │
+│  │  • Merge, filter by TVL, sort by APY                   │ │
 │  │  • Store: vaultAddress → { apy, tvl, protocol }        │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
@@ -631,7 +771,7 @@ interface IYieldAdapter {
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │  UserOp Submitter                                      │ │
 │  │  • Build UserOperation for migrateStrategy()           │ │
-│  │  • Sign with automation key (stored securely)          │ │
+│  │  • Sign with session key (stored securely)             │ │
 │  │  • Submit to ZeroDev bundler                           │ │
 │  │  • Handle retries and confirmations                    │ │
 │  └────────────────────────────────────────────────────────┘ │
@@ -646,30 +786,150 @@ interface IYieldAdapter {
 └─────────────────────────────────────────────────────────────┘
 ```
 
-#### 5.6.2 Yield Indexer Details
+#### 5.6.2 Yield Aggregator Details
 
-**Data source:** DefiLlama Yields API
+**Data sources:** Direct protocol GraphQL APIs (NOT DefiLlama)
 
+We query each protocol's official API to get real-time vault data:
+
+| Protocol | API Endpoint | Data Returned |
+|----------|--------------|---------------|
+| Morpho | `https://blue-api.morpho.org/graphql` | Vault address, netApy, netApyWithoutRewards, rewards, TVL |
+| Aave | `https://api.v3.aave.com/graphql` | Vault address, vaultApr, supplyApy, TVL, fees |
+
+**Morpho GraphQL Queries:**
+
+```graphql
+# Step 1: Get asset address for USDC on Base
+query GetChainAsset($chainId: Int!, $assetSymbol: String!) {
+  assets(where: {chainId_in: [$chainId], symbol_in: [$assetSymbol]}) {
+    items { address }
+  }
+}
+
+# Step 2: List all vaults for that asset
+query ListVaults($skip: Int!, $chainId: Int!, $assetAddress: String!) {
+  vaults(first: 1000, skip: $skip, where: {chainId_in: [$chainId], assetAddress_in: [$assetAddress]}) {
+    items {
+      name address symbol
+      warnings { type level }
+      state {
+        totalAssetsUsd
+        netApy                  # Total APY including rewards
+        netApyWithoutRewards    # Base lending APY
+        rewards {
+          supplyApr
+          asset { address symbol }
+        }
+      }
+    }
+    pageInfo { count limit }
+  }
+}
 ```
-GET https://yields.llama.fi/pools
 
-Response filtering:
-- chain === "Base"
-- stablecoin === true (for USDC)
-- tvlUsd > 100000 (minimum TVL for safety)
-- apy !== null
+**Aave GraphQL Query:**
+
+```graphql
+query GetVaults($cursor: Cursor) {
+  vaults(request: { criteria: { ownedBy: [] }, pageSize: FIFTY, cursor: $cursor }) {
+    items {
+      address
+      shareName
+      shareSymbol
+      chainId
+      vaultApr { value }        # Vault APR after fees
+      fee { value }
+      balance {
+        amount { value }
+        usd                     # TVL in USD
+      }
+      usedReserve {
+        underlyingToken { symbol address }
+        supplyInfo { apy { value } }  # Base supply APY
+      }
+    }
+    pageInfo { next prev }
+  }
+}
 ```
 
-**Output format:**
+**Output format (unified across protocols):**
 
 ```typescript
-interface VaultInfo {
+interface Vault {
+  // Identification
+  name: string;           // e.g., "Steakhouse USDC"
   address: string;        // Vault contract address
-  protocol: string;       // "aave-v3", "morpho-blue", etc.
-  apy: number;            // Current APY as decimal (0.05 = 5%)
-  tvl: number;            // Total value locked in USD
-  adapterAddress: string; // Our adapter contract for this vault
+  symbol: string;         // e.g., "steakUSDC"
+
+  // Yield data
+  apy: number;            // Total effective APY (decimal: 0.05 = 5%)
+  baseApy: number;        // Base lending APY without rewards
+  rewards: Reward[];      // Additional reward tokens
+
+  // Risk/size data
+  tvlUsd: number;         // Total value locked
+
+  // Metadata
+  source: "morpho" | "aave";
+  chainId: number;
+  underlyingAsset: string; // "USDC"
 }
+
+interface Reward {
+  symbol: string;         // e.g., "MORPHO"
+  apy: number;            // Reward APY contribution
+}
+```
+
+**Aggregator Logic:**
+
+```typescript
+async function getBestVaults(options: {
+  assetSymbol?: string;    // Default: "USDC"
+  chainId?: number;        // Default: 8453 (Base)
+  minTvlUsd?: number;      // Filter small/test vaults
+  excludeWarnings?: boolean; // Skip Morpho vaults with warnings
+  topN?: number;           // Return top N vaults
+}): Promise<Vault[]> {
+
+  // 1. Fetch from both sources in parallel
+  const [morphoVaults, aaveVaults] = await Promise.all([
+    getMorphoVaults(assetSymbol, chainId, excludeWarnings),
+    getAaveVaults(assetSymbol, chainId),
+  ]);
+
+  // 2. Merge all vaults
+  let allVaults = [...morphoVaults, ...aaveVaults];
+
+  // 3. Filter by minimum TVL
+  if (minTvlUsd > 0) {
+    allVaults = allVaults.filter(v => v.tvlUsd >= minTvlUsd);
+  }
+
+  // 4. Sort by APY (highest first)
+  allVaults.sort((a, b) => b.apy - a.apy);
+
+  // 5. Return top N
+  return topN ? allVaults.slice(0, topN) : allVaults;
+}
+```
+
+**Example output:**
+
+```
+[MORPHO] Steakhouse USDC
+  Address: 0x123...
+  APY: 8.45% (base: 3.20%)
+  TVL: $12,345,678
+  └─ MORPHO: +2.10%
+  └─ wstETH: +0.35%
+
+[AAVE] Aave USDC Vault Shares
+  Address: 0x21C...
+  APY: 3.16% (base: 3.26%)
+  TVL: $2,001,234
 ```
 
 #### 5.6.3 Migration Decision Logic
@@ -701,19 +961,36 @@ function shouldMigrate(wallet: WalletState, vaults: VaultInfo[]): MigrationDecis
 
 ### 6.1 Onboarding (One-Time Setup)
 
+**Important: The user's existing wallet (MetaMask/Coinbase Wallet) is used for SIGNING only. All funds go to the NEW smart wallet.**
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 1: Connect Wallet                                          │
+│  STEP 1: Connect Existing Wallet (for signing)                   │
+│                                                                  │
 │  User connects their EOA (Coinbase Wallet / MetaMask)           │
+│                                                                  │
+│  This wallet will NOT hold funds — it only proves identity.     │
+│  The EOA address becomes the "owner" who can authorize txs.     │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 2: Create Autopilot Wallet                                 │
+│  STEP 2: Create Autopilot Wallet (Smart Account)                 │
+│                                                                  │
 │  User clicks "Create Autopilot Wallet"                          │
-│  • Signs one message (authorizes wallet creation)               │
-│  • Factory deploys Kernel account with AutoYieldModule          │
-│  • User receives their new smart wallet address                 │
+│                                                                  │
+│  Behind the scenes:                                              │
+│  1. Frontend reads user's EOA address (0xUser123...)            │
+│  2. Frontend calls: factory.createAccountFor(eoaAddress, salt)  │
+│  3. Factory deploys Kernel account configured with:             │
+│     • ECDSA Validator: 0xUser123 is the owner/signer            │
+│     • AutoYieldModule: pre-installed as executor                │
+│  4. User receives their NEW smart wallet address (0xSmart456...)│
+│                                                                  │
+│  The smart wallet is where ALL funds will live.                 │
+│  The EOA (0xUser123) is only used to SIGN transactions.         │
+│                                                                  │
+│  User signs one message to authorize deployment.                │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
@@ -729,10 +1006,14 @@ function shouldMigrate(wallet: WalletState, vaults: VaultInfo[]): MigrationDecis
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 4: Fund Wallet                                             │
-│  User sends USDC to their smart wallet address                  │
-│  • From CEX withdrawal                                          │
-│  • From existing wallet                                         │
+│  STEP 4: Fund the SMART WALLET (not the EOA!)                    │
+│                                                                  │
+│  User sends USDC to their SMART WALLET address (0xSmart456...)  │
+│  NOT to their MetaMask/Coinbase Wallet address!                 │
+│                                                                  │
+│  Funding options:                                                │
+│  • From CEX withdrawal → send to 0xSmart456                     │
+│  • From existing wallet → transfer to 0xSmart456                │
 │  • (Optional) Via onramp                                         │
 └────────────────────────────┬────────────────────────────────────┘
                              │
@@ -741,12 +1022,19 @@ function shouldMigrate(wallet: WalletState, vaults: VaultInfo[]): MigrationDecis
 │  STEP 5: Automation Begins                                       │
 │  Backend detects new deposit:                                    │
 │  • Builds UserOp: rebalance(USDC)                               │
-│  • Signs with automation key                                     │
+│  • Signs with session key (automation key)                       │
 │  • Excess USDC deposited to highest-yield vault                 │
 │                                                                  │
 │  User action required: NONE                                      │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**The Two Addresses Explained:**
+
+| Address | What It Is | Holds Funds? | Used For |
+|---------|------------|--------------|----------|
+| `0xUser123...` | User's EOA (MetaMask) | NO | Signing transactions |
+| `0xSmart456...` | Autopilot Smart Wallet | YES | Holding USDC, yield positions |
 
 **After onboarding, the user never needs to:**
 - Click "rebalance"
@@ -987,10 +1275,17 @@ Contracts are not upgradeable. This prevents:
 
 ### 8.5 Data APIs
 
+**Primary: Direct Protocol APIs (used for yield data)**
+
+| Protocol | API Endpoint | Data |
+|----------|--------------|------|
+| Morpho | `https://blue-api.morpho.org/graphql` | Vault APYs, TVL, rewards, addresses |
+| Aave | `https://api.v3.aave.com/graphql` | Vault APYs, TVL, fees, addresses |
+
+**Secondary: Price Data (for dust valuation)**
+
 | Data | Source |
 |------|--------|
-| Yield APYs | DefiLlama `/yields/pools` |
-| Vault TVL | DefiLlama `/yields/pools` |
 | Token Prices | DefiLlama `/prices` or Coingecko |
 
 ### 8.6 Frontend
@@ -1187,7 +1482,7 @@ Contracts are not upgradeable. This prevents:
 
 ### Open Questions
 
-1. **Session key vs. secondary validator?** Need to confirm Kernel v3 supports the exact permission model we need for automation key
+1. ~~**Session key vs. secondary validator?**~~ **RESOLVED:** Using session keys with scoped permissions for automation. See Section 4.2.
 2. **Yield threshold for migration?** Currently 0.5% — should this be configurable per user?
 3. **Dust swap slippage?** What's acceptable for dust consolidation?
 
@@ -1229,12 +1524,34 @@ GET  /dust-tokens
      Returns: { tokens: [{ address, symbol, minSweepValue }] }
 ```
 
-### DefiLlama API (External)
+### Protocol GraphQL APIs (External)
 
+**Morpho Blue API:**
 ```
-GET https://yields.llama.fi/pools
-    Filter: chain=Base, stablecoin=true
+POST https://blue-api.morpho.org/graphql
 
-GET https://yields.llama.fi/chart/:poolId
-    Returns: historical APY data
+# Get USDC address on Base
+query GetChainAsset($chainId: Int!, $assetSymbol: String!) {
+  assets(where: {chainId_in: [$chainId], symbol_in: [$assetSymbol]}) {
+    items { address }
+  }
+}
+
+# List vaults for asset
+query ListVaults($skip: Int!, $chainId: Int!, $assetAddress: String!) {
+  vaults(first: 1000, skip: $skip, where: {...}) {
+    items { name, address, symbol, state { netApy, totalAssetsUsd, rewards {...} } }
+  }
+}
+```
+
+**Aave API:**
+```
+POST https://api.v3.aave.com/graphql
+
+query GetVaults($cursor: Cursor) {
+  vaults(request: { criteria: { ownedBy: [] }, pageSize: FIFTY, cursor: $cursor }) {
+    items { address, shareName, chainId, vaultApr { value }, balance { usd }, usedReserve {...} }
+  }
+}
 ```
