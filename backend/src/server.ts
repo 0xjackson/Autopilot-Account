@@ -14,10 +14,25 @@ import {
   RecommendationsResponse,
   RebalanceTasksResponse,
   RebalanceTaskResponse,
+  DustTokensResponse,
+  DustConfigResponse,
+  DustSummaryResponse,
   ErrorResponse,
   RiskTier,
   RebalanceTaskInput,
 } from "./types";
+import {
+  getDustTokens,
+  getDustSources,
+  getDustConfig,
+  getDustConfigByAddress,
+  getDustSummary,
+  getTokenBySymbol,
+  getTokenByAddress,
+  isValidConsolidationSymbol,
+  DEFAULT_DUST_CHAIN_ID,
+} from "./dustService";
+import { isValidWalletAddress as isValidWallet } from "./scheduler";
 import {
   startScheduler,
   stopScheduler,
@@ -135,6 +150,9 @@ app.get("/", (_req: Request, res: Response) => {
       "/tokens",
       "/chains",
       "/rebalance-tasks",
+      "/dust/tokens",
+      "/dust/config",
+      "/dust/summary",
     ],
     scheduler: getSchedulerStatus(),
   });
@@ -554,6 +572,170 @@ app.get("/scheduler/status", (_req: Request, res: Response) => {
 });
 
 // ============================================================================
+// B4: Dust Token Endpoints
+// ============================================================================
+
+/**
+ * GET /dust/tokens
+ * Returns all dust token metadata for a chain
+ *
+ * Query params:
+ *   - chainId: number (optional, default 8453)
+ */
+app.get("/dust/tokens", (req: Request, res: Response) => {
+  const chainId = parseChainId(req.query.chainId);
+
+  if (chainId === null) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid chainId parameter. Must be a positive integer.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  const tokens = getDustTokens(chainId);
+  const dustSources = getDustSources(chainId);
+
+  const response: DustTokensResponse = {
+    chainId,
+    tokens,
+    totalCount: tokens.length,
+    dustSourceCount: dustSources.length,
+  };
+
+  return res.json(response);
+});
+
+/**
+ * GET /dust/config
+ * Returns dust sweep configuration for a chain
+ *
+ * Query params:
+ *   - chainId: number (optional, default 8453)
+ *   - consolidation: string (optional, token symbol or address, default "USDC")
+ */
+app.get("/dust/config", (req: Request, res: Response) => {
+  const chainId = parseChainId(req.query.chainId);
+
+  if (chainId === null) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid chainId parameter. Must be a positive integer.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  // Parse consolidation parameter (can be symbol or address)
+  let consolidationSymbol: string | undefined;
+  const consolidationParam = req.query.consolidation as string | undefined;
+
+  if (consolidationParam) {
+    // Check if it's an address (starts with 0x)
+    if (consolidationParam.startsWith("0x")) {
+      const token = getTokenByAddress(chainId, consolidationParam);
+      if (!token) {
+        const errorResponse: ErrorResponse = {
+          error: `Unknown token address: ${consolidationParam}`,
+        };
+        return res.status(404).json(errorResponse);
+      }
+      if (!token.isConsolidationTarget) {
+        const errorResponse: ErrorResponse = {
+          error: `Token ${token.symbol} is not a valid consolidation target`,
+        };
+        return res.status(400).json(errorResponse);
+      }
+      consolidationSymbol = token.symbol;
+    } else {
+      // Treat as symbol
+      consolidationSymbol = consolidationParam.toUpperCase();
+      if (!isValidConsolidationSymbol(chainId, consolidationSymbol)) {
+        const errorResponse: ErrorResponse = {
+          error: `Invalid consolidation token: ${consolidationSymbol}. Must be a valid consolidation target (e.g., USDC, WETH).`,
+        };
+        return res.status(400).json(errorResponse);
+      }
+    }
+  }
+
+  const config = getDustConfig(chainId, consolidationSymbol);
+
+  if (!config) {
+    const errorResponse: ErrorResponse = {
+      error: `No dust configuration available for chain ${chainId}`,
+    };
+    return res.status(404).json(errorResponse);
+  }
+
+  const consolidationToken = getTokenBySymbol(chainId, config.defaultConsolidationToken);
+
+  if (!consolidationToken) {
+    const errorResponse: ErrorResponse = {
+      error: "Consolidation token not found",
+    };
+    return res.status(500).json(errorResponse);
+  }
+
+  const response: DustConfigResponse = {
+    chainId,
+    consolidationToken,
+    dustSources: config.trackedDustTokens,
+    totalDustSources: config.trackedDustTokens.length,
+  };
+
+  return res.json(response);
+});
+
+/**
+ * GET /dust/summary
+ * Returns dust summary for a wallet (STUB - returns mock data)
+ *
+ * Query params:
+ *   - wallet: string (required, 0x address)
+ *   - chainId: number (optional, default 8453)
+ *   - consolidation: string (optional, token symbol, default "USDC")
+ *
+ * TODO: Implement real on-chain balance reading in B5+
+ */
+app.get("/dust/summary", (req: Request, res: Response) => {
+  const wallet = req.query.wallet as string | undefined;
+  const chainId = parseChainId(req.query.chainId);
+  const consolidation = req.query.consolidation as string | undefined;
+
+  // Validate wallet
+  if (!wallet) {
+    const errorResponse: ErrorResponse = {
+      error: "Missing required parameter: wallet",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  if (!isValidWallet(wallet)) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid wallet address format. Must be 0x followed by 40 hex characters.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  if (chainId === null) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid chainId parameter. Must be a positive integer.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  // Validate consolidation token if provided
+  if (consolidation && !isValidConsolidationSymbol(chainId, consolidation.toUpperCase())) {
+    const errorResponse: ErrorResponse = {
+      error: `Invalid consolidation token: ${consolidation}`,
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  const summary = getDustSummary(wallet, chainId, consolidation?.toUpperCase());
+
+  return res.json(summary);
+});
+
+// ============================================================================
 // Error handling
 // ============================================================================
 
@@ -598,6 +780,10 @@ app.listen(PORT, () => {
 ║    POST /rebalance-tasks     - Create a task              ║
 ║    POST /rebalance-tasks/:id/run - Trigger task manually  ║
 ║    DELETE /rebalance-tasks/:id   - Remove a task          ║
+║  Dust Service (B4):                                       ║
+║    GET  /dust/tokens         - List dust tokens           ║
+║    GET  /dust/config         - Get dust sweep config      ║
+║    GET  /dust/summary        - Wallet dust summary (stub) ║
 ╚═══════════════════════════════════════════════════════════╝
   `);
 

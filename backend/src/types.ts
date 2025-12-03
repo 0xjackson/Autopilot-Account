@@ -228,3 +228,98 @@ export type TaskExecutionResult = {
   // TODO (B5): Add userOp hash when bundler integration is complete
   // userOpHash?: string;
 };
+
+// ============================================================================
+// B4: Dust token metadata service
+// ============================================================================
+
+/**
+ * Suggested action for handling a dust token
+ */
+export type DustAction = "swap" | "hold" | "ignore";
+
+/**
+ * Metadata for a token that may be treated as "dust"
+ */
+export type DustTokenMeta = {
+  /** Chain ID where this token exists */
+  chainId: number;
+  /** Token contract address */
+  tokenAddress: string;
+  /** Token symbol (e.g., "DEGEN", "AERO") */
+  symbol: string;
+  /** Human-readable token name */
+  name: string;
+  /** Token decimals (usually 18, but varies) */
+  decimals: number;
+  /** Whether this token is treated as a dust source (small balance to sweep) */
+  isDustSource: boolean;
+  /** Suggested action: swap to consolidation, hold, or ignore */
+  suggestedAction: DustAction;
+  /** Token address to consolidate into (e.g., USDC address) */
+  consolidationTarget?: string;
+  /** Optional notes about the token */
+  notes?: string;
+  /** Whether this token can be used as a consolidation target */
+  isConsolidationTarget?: boolean;
+  /** Minimum balance (in token units) below which it's considered dust */
+  dustThreshold?: number;
+};
+
+/**
+ * Configuration for dust sweeping operations
+ */
+export type DustConfig = {
+  /** Chain ID */
+  chainId: number;
+  /** Default consolidation token symbol */
+  defaultConsolidationToken: string;
+  /** Default consolidation token address */
+  defaultConsolidationAddress: string;
+  /** List of tokens being tracked as dust sources */
+  trackedDustTokens: DustTokenMeta[];
+  /** Available consolidation targets */
+  consolidationTargets: DustTokenMeta[];
+};
+
+/**
+ * Response for GET /dust/tokens endpoint
+ */
+export type DustTokensResponse = {
+  chainId: number;
+  tokens: DustTokenMeta[];
+  totalCount: number;
+  dustSourceCount: number;
+};
+
+/**
+ * Response for GET /dust/config endpoint
+ */
+export type DustConfigResponse = {
+  chainId: number;
+  consolidationToken: DustTokenMeta;
+  dustSources: DustTokenMeta[];
+  totalDustSources: number;
+};
+
+/**
+ * Mock balance for dust summary (future: real on-chain data)
+ */
+export type DustBalance = {
+  token: DustTokenMeta;
+  balance: string;
+  balanceUsd?: number;
+  isDust: boolean;
+};
+
+/**
+ * Response for GET /dust/summary endpoint (stub for now)
+ */
+export type DustSummaryResponse = {
+  wallet: string;
+  chainId: number;
+  consolidationToken: string;
+  dustBalances: DustBalance[];
+  totalDustValueUsd?: number;
+  note: string;
+};
