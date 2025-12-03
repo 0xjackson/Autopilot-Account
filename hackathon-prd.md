@@ -813,18 +813,18 @@ User: "Send 150 USDC to 0x1234..."
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Backend Cron (user is asleep, not using app)                   │
-│                                                                  │
+│                                                                 │
 │  1. Yield Indexer fetches latest APYs                           │
 │     • Aave USDC: 4.2%                                           │
 │     • Morpho USDC: 5.5% ← NEW BEST                              │
-│                                                                  │
+│                                                                 │
 │  2. Rebalance Engine scans user's wallet                        │
 │     • Current: Aave (4.2%)                                      │
 │     • Best: Morpho (5.5%)                                       │
 │     • Delta: +1.3% > 0.5% threshold                             │
-│     • Decision: MIGRATE                                          │
-│                                                                  │
-│  3. UserOp Submitter                                             │
+│     • Decision: MIGRATE                                         │
+│                                                                 │
+│  3. UserOp Submitter                                            │
 │     • Builds: migrateStrategy(USDC, morphoAdapter)              │
 │     • Signs with automation key                                  │
 │     • Submits to bundler                                         │
