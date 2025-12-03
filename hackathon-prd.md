@@ -1329,25 +1329,447 @@ For MVP, we only build the Morpho adapter since Morpho vaults consistently offer
 
 ## 9. Deliverables & Work Breakdown
 
-### 9.1 Smart Contracts (Jackson)
+### 9.1 Smart Contracts
 
-| ID | Contract | Description | Dependencies |
-|----|----------|-------------|--------------|
-| C1 | `AutoYieldModule.sol` | Core module with all yield logic | IYieldAdapter |
-| C2 | `AutopilotFactory.sol` | Deploys wallets with module installed | Kernel, AutoYieldModule |
-| C3 | `IYieldAdapter.sol` | Interface for vault adapters | — |
-| C4 | `MockYieldVault.sol` | ERC-4626 mock for testing | IYieldAdapter |
-| C5 | `MorphoAdapter.sol` | Adapter for Morpho Blue (ERC-4626) | IYieldAdapter |
-| C6 | Dual-key validation | Configure Kernel for automation key | Kernel |
+#### 9.1.1 Implementation Order & Roadmap
 
-**Note:** We only build the Morpho adapter for MVP. Morpho MetaMorpho vaults are ERC-4626 compliant and currently offer the best APY (5-7%). The yield aggregator fetches rates from Morpho, Aave, and Moonwell for UI display, but contracts only deposit to Morpho vaults.
+Build contracts in this order (each step depends on the previous):
 
-**Acceptance Criteria:**
-- Wallet deploys with module pre-installed
-- `executeWithAutoYield` auto-unstakes and re-stakes in one tx
-- `migrateStrategy` moves funds between whitelisted vaults
-- Automation key can only call allowed functions
-- All operations are gasless via paymaster
+```
+Step 1: IYieldAdapter.sol (interface)
+    ↓
+Step 2: MockYieldVault.sol (for testing)
+    ↓
+Step 3: MorphoAdapter.sol (real yield)
+    ↓
+Step 4: AutoYieldModule.sol (core logic)
+    ↓
+Step 5: AutopilotFactory.sol (deployment)
+    ↓
+Step 6: Session key configuration (Kernel setup)
+```
+
+---
+
+#### 9.1.2 Contract Details
+
+##### Step 1: `IYieldAdapter.sol` — Interface (Start Here)
+
+**What it is:** The standard interface all yield adapters must implement. This abstraction lets AutoYieldModule interact with any vault type through a common API.
+
+**Why it matters:** Without this interface, the module would need protocol-specific code. With it, we can swap adapters without changing core logic.
+
+**Implementation:**
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.23;
+
+interface IYieldAdapter {
+    /// @notice Deposit tokens into the yield strategy
+    /// @param amount Amount of underlying tokens to deposit
+    /// @return shares Amount of vault shares received
+    function deposit(uint256 amount) external returns (uint256 shares);
+
+    /// @notice Withdraw tokens from the yield strategy
+    /// @param amount Amount of underlying tokens to withdraw
+    /// @return actualAmount Actual amount withdrawn (may differ due to rounding)
+    function withdraw(uint256 amount) external returns (uint256 actualAmount);
+
+    /// @notice Get total value of deposits for the caller
+    /// @return Total value in underlying token terms
+    function totalValue() external view returns (uint256);
+
+    /// @notice Get the underlying token address (e.g., USDC)
+    function asset() external view returns (address);
+
+    /// @notice Get the vault address this adapter wraps
+    function vault() external view returns (address);
+}
+```
+
+**File location:** `contracts/src/interfaces/IYieldAdapter.sol`
+
+**Time estimate:** 30 minutes
+
+---
+
+##### Step 2: `MockYieldVault.sol` — Test Vault
+
+**What it is:** A fake ERC-4626 vault for local testing. Lets you test the full flow without needing real Morpho vaults or testnet tokens.
+
+**Why it matters:** You can't develop AutoYieldModule without a vault to test against. Real vaults require testnet USDC and are slow. This mock gives instant feedback.
+
+**Key features:**
+- Implements ERC-4626 (deposit/withdraw/redeem)
+- Simple 1:1 share ratio (1 USDC = 1 share)
+- Optional: `simulateYield(uint256 amount)` function to fake yield accrual for demos
+- Owner can mint fake USDC for testing
+
+**Implementation notes:**
+- Inherit from OpenZeppelin's ERC4626
+- Add a `setYieldRate()` function to simulate APY
+- Add `accrueYield()` that increases totalAssets (for demo purposes)
+
+**File location:** `contracts/src/mocks/MockYieldVault.sol`
+
+**Time estimate:** 1-2 hours
+
+---
+
+##### Step 3: `MorphoAdapter.sol` — Real Yield Adapter
+
+**What it is:** Adapter that wraps Morpho MetaMorpho vaults. Since MetaMorpho vaults are ERC-4626 compliant, this is mostly a thin passthrough.
+
+**Why Morpho:** The yield aggregator shows Morpho vaults consistently offer 5-7% APY on USDC (vs Aave ~3%, Moonwell ~5.8%). All MetaMorpho vaults follow ERC-4626, making integration trivial.
+
+**Implementation:**
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.23;
+
+import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+contract MorphoAdapter is IYieldAdapter {
+    using SafeERC20 for IERC20;
+
+    IERC4626 public immutable vault;
+    IERC20 public immutable asset;
+
+    constructor(address _vault) {
+        vault = IERC4626(_vault);
+        asset = IERC20(vault.asset());
+    }
+
+    function deposit(uint256 amount) external returns (uint256 shares) {
+        asset.safeTransferFrom(msg.sender, address(this), amount);
+        asset.approve(address(vault), amount);
+        shares = vault.deposit(amount, msg.sender);
+    }
+
+    function withdraw(uint256 amount) external returns (uint256 actualAmount) {
+        // Withdraw from vault, sending assets directly to caller
+        actualAmount = vault.withdraw(amount, msg.sender, msg.sender);
+    }
+
+    function totalValue() external view returns (uint256) {
+        uint256 shares = vault.balanceOf(msg.sender);
+        return vault.convertToAssets(shares);
+    }
+
+    function asset() external view returns (address) {
+        return address(asset);
+    }
+
+    function vault() external view returns (address) {
+        return address(vault);
+    }
+}
+```
+
+**Morpho vault addresses (from yield aggregator):**
+
+The backend yield fetcher returns the best vault. Example top vaults on Base:
+- `0x5435BC53f2C61298167cdB11Cdf0Db2BFa259ca0` - Edge UltraYield USDC (6.94% APY)
+- `0x1D3b1Cd0a0f242d598834b3F2d126dC6bd774657` - Clearstar USDC Reactor (6.29% APY)
+- `0xBEEFE94c8aD530842bfE7d8B397938fFc1cb83b2` - Steakhouse Prime USDC (5.67% APY, $69M TVL)
+
+**Note:** Deploy one MorphoAdapter per vault, OR make the vault address configurable per-account in AutoYieldModule.
+
+**File location:** `contracts/src/adapters/MorphoAdapter.sol`
+
+**Time estimate:** 1-2 hours
+
+---
+
+##### Step 4: `AutoYieldModule.sol` — Core Logic (Most Complex)
+
+**What it is:** The brain of Autopilot Wallet. An ERC-7579 executor module that handles all yield logic.
+
+**Why it's complex:** This contract must:
+1. Store per-account configuration (thresholds, adapters, automation keys)
+2. Execute `executeWithAutoYield()` — auto-unstake → transfer → re-stake in one call
+3. Handle `rebalance()` and `migrateStrategy()` for automation
+4. Validate that automation key can only call specific functions
+5. Integrate with Kernel's module system
+
+**Storage (per account):**
+
+```solidity
+// User configuration
+mapping(address account => mapping(address token => uint256)) public checkingThreshold;
+mapping(address account => mapping(address token => address)) public currentAdapter;
+mapping(address account => address) public automationKey;
+mapping(address account => mapping(address adapter => bool)) public allowedAdapters;
+```
+
+**Key functions:**
+
+```solidity
+// === OWNER ONLY ===
+
+/// @notice Set minimum balance to keep liquid (not in yield)
+function setCheckingThreshold(address token, uint256 threshold) external;
+
+/// @notice Set which adapter to use for a token
+function setCurrentAdapter(address token, address adapter) external;
+
+/// @notice Authorize an automation key for background operations
+function setAutomationKey(address key) external;
+
+/// @notice Whitelist an adapter for use
+function addAllowedAdapter(address adapter) external;
+
+/// @notice Execute a transfer, auto-withdrawing from yield if needed
+/// This is the main user-facing function for spending
+function executeWithAutoYield(
+    address token,
+    address to,
+    uint256 amount,
+    bytes calldata data
+) external;
+
+/// @notice Emergency: withdraw everything from yield to checking
+function flushToChecking(address token) external;
+
+
+// === AUTOMATION OR OWNER ===
+
+/// @notice Move excess checking balance into yield
+function rebalance(address token) external;
+
+/// @notice Migrate from current vault to a better vault
+function migrateStrategy(address token, address newAdapter) external;
+
+/// @notice Sweep dust tokens and compound into yield
+function sweepDustAndCompound() external;
+```
+
+**Core logic for `executeWithAutoYield`:**
+
+```solidity
+function executeWithAutoYield(
+    address token,
+    address to,
+    uint256 amount,
+    bytes calldata data
+) external onlyOwner {
+    uint256 threshold = checkingThreshold[msg.sender][token];
+    uint256 checking = IERC20(token).balanceOf(msg.sender);
+    uint256 required = amount + threshold;
+
+    // 1. Withdraw from yield if checking balance insufficient
+    if (checking < required) {
+        uint256 deficit = required - checking;
+        address adapter = currentAdapter[msg.sender][token];
+        IYieldAdapter(adapter).withdraw(deficit);
+    }
+
+    // 2. Execute the user's intended transfer/call
+    // This is done via Kernel's execute function
+    _execute(to, 0, data);
+
+    // 3. Deposit surplus back into yield
+    uint256 newChecking = IERC20(token).balanceOf(msg.sender);
+    if (newChecking > threshold) {
+        uint256 surplus = newChecking - threshold;
+        address adapter = currentAdapter[msg.sender][token];
+        IERC20(token).approve(adapter, surplus);
+        IYieldAdapter(adapter).deposit(surplus);
+    }
+}
+```
+
+**ERC-7579 Module Requirements:**
+
+Must implement the module interface:
+```solidity
+function onInstall(bytes calldata data) external;
+function onUninstall(bytes calldata data) external;
+function isModuleType(uint256 typeID) external view returns (bool);
+function isInitialized(address smartAccount) external view returns (bool);
+```
+
+**References:**
+- Rhinestone ModuleKit: https://github.com/rhinestonewtf/modulekit
+- ERC-7579 spec: https://eips.ethereum.org/EIPS/eip-7579
+
+**File location:** `contracts/src/modules/AutoYieldModule.sol`
+
+**Time estimate:** 4-8 hours (this is the main work)
+
+---
+
+##### Step 5: `AutopilotFactory.sol` — Account Deployment
+
+**What it is:** Factory that deploys new Kernel smart accounts with AutoYieldModule pre-installed.
+
+**Why it matters:** Users shouldn't have to manually install modules. The factory creates a ready-to-use wallet in one transaction.
+
+**Key function:**
+
+```solidity
+function createAccount(
+    address owner,
+    uint256 checkingThreshold,
+    address defaultAdapter,
+    bytes32 salt
+) external returns (address account) {
+    // 1. Build Kernel initialization data:
+    //    - Set ECDSA validator with owner as signer
+    //    - Install AutoYieldModule as executor
+
+    // 2. Call KernelFactory.createAccount(initData, salt)
+
+    // 3. Initialize AutoYieldModule config:
+    //    - Set checking threshold
+    //    - Set default adapter
+    //    - Whitelist default adapter
+
+    // 4. Emit event for indexing
+    emit AccountCreated(owner, account);
+}
+```
+
+**Dependencies:**
+- ZeroDev Kernel Factory: `0x2577507b78c2008Ff367261CB6285d44ba5eF2E9` (Base)
+- ZeroDev ECDSA Validator: `0x845ADb2C711129d4f3966735eD98a9F09fC4cE57` (Base)
+
+**File location:** `contracts/src/AutopilotFactory.sol`
+
+**Time estimate:** 2-3 hours
+
+---
+
+##### Step 6: Session Key Configuration (Kernel Setup)
+
+**What it is:** Configure Kernel to recognize the automation key and restrict what it can do.
+
+**Why it matters:** The backend needs to call `rebalance()` and `migrateStrategy()` without user signatures. But we must ensure it can NEVER call `transfer()` or steal funds.
+
+**Decision: Single Global Session Key (Hackathon Simplification)**
+
+For the hackathon, we use ONE session key for ALL wallets:
+
+1. Backend generates a single keypair and stores the private key in environment variables
+2. The public key is hardcoded in AutopilotFactory
+3. Every wallet deployed by the factory registers this same public key as an authorized automation signer
+4. Backend uses the one private key to sign automation UserOps for any wallet
+
+This is simpler than per-wallet keys (no key management DB needed) and secure enough for demo purposes. The session key still has restricted permissions - it can only call `rebalance`, `migrateStrategy`, and `sweepDustAndCompound`.
+
+**Implementation:**
+
+1. Generate the session key once (backend team does this):
+```javascript
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+const privateKey = generatePrivateKey();
+const account = privateKeyToAccount(privateKey);
+console.log("Private key (store in AUTOMATION_PRIVATE_KEY env var):", privateKey);
+console.log("Public key (hardcode in AutopilotFactory):", account.address);
+```
+
+2. AutopilotFactory hardcodes the session key public address and registers it during wallet creation with restricted permissions.
+
+3. Backend uses AUTOMATION_PRIVATE_KEY to sign UserOps.
+
+**How session keys work in Kernel:**
+
+1. **Register session key** during wallet creation:
+```solidity
+// In AutopilotFactory - the AUTOMATION_KEY is hardcoded
+address constant AUTOMATION_KEY = 0x...; // Backend's session key public address
+
+// During wallet creation, register it with restricted permissions
+kernel.setSecondaryValidator(
+    AUTOMATION_KEY,
+    allowedSelectors: [
+        AutoYieldModule.rebalance.selector,
+        AutoYieldModule.migrateStrategy.selector,
+        AutoYieldModule.sweepDustAndCompound.selector
+    ]
+);
+```
+
+2. **Validation flow:**
+   - UserOp comes in signed by automation key
+   - Kernel checks: "Is this signer allowed for this function selector?"
+   - If yes → execute. If no → revert.
+
+**ZeroDev Session Key Resources:**
+- Docs: https://docs.zerodev.app/sdk/permissions/session-keys
+- SDK: `@zerodev/session-key`
+
+**Time estimate:** 2-4 hours
+
+---
+
+#### 9.1.3 Contract Summary Table
+
+| ID | Contract | Description | Dependencies | Time |
+|----|----------|-------------|--------------|------|
+| C1 | `IYieldAdapter.sol` | Interface for adapters | — | 30min |
+| C2 | `MockYieldVault.sol` | Fake ERC-4626 for testing | C1 | 1-2hr |
+| C3 | `MorphoAdapter.sol` | Wraps Morpho MetaMorpho vaults | C1 | 1-2hr |
+| C4 | `AutoYieldModule.sol` | Core yield logic, ERC-7579 module | C1, Kernel | 4-8hr |
+| C5 | `AutopilotFactory.sol` | Deploys wallets with module | C4, Kernel | 2-3hr |
+| C6 | Session key setup | Automation key permissions | Kernel | 2-4hr |
+
+**Total estimate:** 11-20 hours
+
+---
+
+#### 9.1.4 Key External Dependencies
+
+**Already deployed on Base (use these addresses):**
+
+| Contract | Address | Notes |
+|----------|---------|-------|
+| Kernel Factory | `0x2577507b78c2008Ff367261CB6285d44ba5eF2E9` | ZeroDev v3 |
+| ECDSA Validator | `0x845ADb2C711129d4f3966735eD98a9F09fC4cE57` | For owner key |
+| EntryPoint | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | ERC-4337 v0.7 |
+| USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | Native USDC on Base |
+
+**NPM packages:**
+```bash
+forge install rhinestonewtf/modulekit  # ERC-7579 helpers
+forge install openzeppelin/contracts   # ERC20, ERC4626, SafeERC20
+```
+
+---
+
+#### 9.1.5 Acceptance Criteria
+
+- [ ] Wallet deploys via factory with AutoYieldModule pre-installed
+- [ ] `executeWithAutoYield` auto-unstakes from yield if checking balance insufficient
+- [ ] `executeWithAutoYield` re-deposits surplus after transfer
+- [ ] `migrateStrategy` moves funds between whitelisted adapters
+- [ ] Automation key can ONLY call `rebalance`, `migrateStrategy`, `sweepDustAndCompound`
+- [ ] Automation key CANNOT call `transfer`, `executeWithAutoYield`, or config functions
+- [ ] All operations work gaslessly via Base Paymaster
+
+---
+
+#### 9.1.6 Testing Strategy
+
+1. **Unit tests** (Foundry):
+   - Test each adapter in isolation
+   - Test AutoYieldModule functions with MockYieldVault
+   - Test access control (owner vs automation key)
+
+2. **Integration tests**:
+   - Deploy full stack on Base Sepolia
+   - Test with real Morpho vault (need testnet USDC)
+   - Test session key flow end-to-end
+
+3. **Fork tests**:
+   - Fork Base mainnet
+   - Test against real Morpho vaults with real USDC
+   - Verify APY/TVL data matches yield aggregator
 
 ### 9.2 Backend (Bryce)
 
