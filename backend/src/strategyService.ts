@@ -1,6 +1,6 @@
 import { Strategy, RiskTier, ScoredStrategy, StrategyPreferences, DataSource, StrategyMetadata } from "./types";
 import { strategies as mockStrategies, CHAIN_IDS } from "./strategies";
-import { getCachedStrategies, LiveStrategyResult } from "./liveStrategyStore";
+import { getCachedStrategies, getExecutableStrategies, LiveStrategyResult } from "./liveStrategyStore";
 import { Vault } from "./yieldAggregator";
 import { getAdapterAddress, ProtocolSource } from "./config/adapterAddresses";
 
@@ -306,6 +306,103 @@ export async function getRecommendedStrategies(
  */
 export function isValidRiskTier(value: string): value is RiskTier {
   return value === "low" || value === "med" || value === "high";
+}
+
+// =============================================================================
+// Executable Strategies (Morpho-only for scheduler)
+// =============================================================================
+
+/**
+ * Get recommended strategies limited to protocols with deployed adapters.
+ * Currently only Morpho has adapters, so this filters to Morpho-only strategies.
+ * Used by the scheduler for actual execution; UI endpoints use getRecommendedStrategies.
+ *
+ * @param token - Token symbol (case-insensitive), e.g. "USDC"
+ * @param chainId - Chain ID, e.g. 8453 for Base mainnet
+ * @param riskTolerance - Maximum risk level user will accept
+ * @param minApy - Minimum acceptable APY as decimal (e.g., 0.05 for 5%)
+ * @returns Object with scored Morpho-only strategies
+ */
+export async function getExecutableRecommendedStrategies(
+  token: string,
+  chainId: number,
+  riskTolerance: RiskTier = DEFAULTS.RISK_TOLERANCE,
+  minApy: number = DEFAULTS.MIN_APY
+): Promise<RecommendedStrategiesResult> {
+  const normalizedToken = token.toUpperCase();
+
+  try {
+    // Get executable strategies only (Morpho for now)
+    const liveResult = await getExecutableStrategies(chainId);
+
+    // Convert vaults to strategies and filter by token
+    const liveStrategies = liveResult.strategies
+      .filter((v) => v.underlyingAsset.toUpperCase() === normalizedToken)
+      .map(vaultToStrategy);
+
+    const totalAvailable = liveStrategies.length;
+
+    // Filter by risk tolerance and minimum APY
+    const filtered = liveStrategies.filter(
+      (s) => isWithinRiskTolerance(s.riskTier, riskTolerance) && s.apy >= minApy
+    );
+
+    // Score and sort strategies
+    const scored: ScoredStrategy[] = filtered
+      .map((s) => ({
+        ...s,
+        score: calculateStrategyScore(s),
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    console.log(
+      `[strategyService] Executable strategies (Morpho-only): ${scored.length} for ${token} on chain ${chainId}`
+    );
+
+    return {
+      strategies: scored,
+      bestStrategy: scored.length > 0 ? scored[0] : null,
+      totalAvailable,
+      metadata: {
+        dataSource: "live",
+        fetchedAt: liveResult.metadata.fetchedAt.toISOString(),
+        expiresAt: liveResult.metadata.expiresAt.toISOString(),
+      },
+    };
+  } catch (error) {
+    // Fallback to mock Morpho-only strategies
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[strategyService] Executable strategies fetch failed: ${message}, falling back to mock`
+    );
+
+    // Filter mock strategies to Morpho-like protocols only
+    const mockExecutable = mockStrategies.filter(
+      (s) =>
+        s.token.toUpperCase() === normalizedToken &&
+        s.chainId === chainId &&
+        s.isActive &&
+        s.protocolName.toLowerCase().includes("morpho")
+    );
+
+    const filtered = mockExecutable.filter(
+      (s) => isWithinRiskTolerance(s.riskTier, riskTolerance) && s.apy >= minApy
+    );
+
+    const scored: ScoredStrategy[] = filtered
+      .map((s) => ({
+        ...s,
+        score: calculateStrategyScore(s),
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    return {
+      strategies: scored,
+      bestStrategy: scored.length > 0 ? scored[0] : null,
+      totalAvailable: mockExecutable.length,
+      metadata: { dataSource: "mock" },
+    };
+  }
 }
 
 // TODO: Future implementation for wallet-specific preferences

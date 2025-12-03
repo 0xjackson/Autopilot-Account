@@ -18,7 +18,7 @@ import {
   RiskTier,
   DataSource,
 } from "./types";
-import { getRecommendedStrategies, DEFAULTS } from "./strategyService";
+import { getExecutableRecommendedStrategies, DEFAULTS } from "./strategyService";
 
 // ============================================================================
 // Configuration
@@ -245,8 +245,8 @@ export async function executeTask(
       strategyId = task.preferredStrategyId;
       log(logSource, `  Using preferred strategy: ${strategyId}`);
     } else {
-      // Find best strategy based on risk tolerance (now async)
-      const result = await getRecommendedStrategies(
+      // Find best executable strategy (Morpho-only) based on risk tolerance
+      const result = await getExecutableRecommendedStrategies(
         task.token,
         task.chainId,
         task.riskTolerance,
@@ -254,7 +254,7 @@ export async function executeTask(
       );
 
       if (!result.bestStrategy) {
-        throw new Error(`No suitable strategy found for ${task.token} on chain ${task.chainId}`);
+        throw new Error(`No executable strategy found for ${task.token} on chain ${task.chainId} (Morpho-only)`);
       }
 
       strategyId = result.bestStrategy.id;
@@ -268,7 +268,7 @@ export async function executeTask(
 
       log(
         logSource,
-        `  Data source: ${dataSource.toUpperCase()}${result.metadata.fetchedAt ? ` (fetched: ${result.metadata.fetchedAt})` : ""}`
+        `  Data source: ${dataSource.toUpperCase()} (Morpho-only)${result.metadata.fetchedAt ? ` (fetched: ${result.metadata.fetchedAt})` : ""}`
       );
       log(
         logSource,

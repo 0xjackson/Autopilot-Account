@@ -219,3 +219,40 @@ export function clearCache(chainId?: number): void {
 export function getCacheTtlMs(): number {
   return CACHE_TTL_MS;
 }
+
+// =============================================================================
+// Executable Strategies (Morpho-only for now)
+// =============================================================================
+
+/**
+ * Protocols that have deployed adapters and can be used by the scheduler.
+ * Until adapters are deployed for all protocols, we limit execution to Morpho.
+ */
+const EXECUTABLE_PROTOCOLS = ["morpho"] as const;
+
+/**
+ * Get strategies that are safe for the scheduler to execute.
+ * Currently limited to Morpho vaults until adapters for other protocols are deployed.
+ *
+ * @param chainId - Chain ID to get strategies for (default: 8453 Base)
+ * @returns Filtered strategy data (Morpho-only) with metadata
+ */
+export async function getExecutableStrategies(
+  chainId: number = DEFAULT_CHAIN_ID
+): Promise<LiveStrategyResult> {
+  const fullResult = await getCachedStrategies(chainId);
+
+  // Filter to only executable protocols (Morpho for now)
+  const executableStrategies = fullResult.strategies.filter((vault) =>
+    EXECUTABLE_PROTOCOLS.includes(vault.source as typeof EXECUTABLE_PROTOCOLS[number])
+  );
+
+  console.log(
+    `[liveStrategyStore] Filtered to ${executableStrategies.length} executable strategies (Morpho-only) from ${fullResult.strategies.length} total`
+  );
+
+  return {
+    ...fullResult,
+    strategies: executableStrategies,
+  };
+}
