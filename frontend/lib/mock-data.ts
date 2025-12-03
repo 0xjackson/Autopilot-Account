@@ -19,6 +19,24 @@ export interface Settings {
   dustThreshold: string;
 }
 
+// Extended settings type for the SettingsForm component
+export interface TokenYieldConfig {
+  enabled: boolean;
+}
+
+export interface WalletSettings {
+  checkingThreshold: string;
+  autoYieldTokens: {
+    USDC: TokenYieldConfig;
+    WETH: TokenYieldConfig;
+  };
+  dustConsolidationToken: "USDC" | "WETH" | "ETH";
+  dustSweepEnabled: boolean;
+  dustThreshold: string;
+  riskTolerance: number; // 1-5 scale
+  yieldStrategy: string;
+}
+
 export interface Transaction {
   id: string;
   type: "send" | "receive" | "yield_deposit" | "yield_withdraw";
