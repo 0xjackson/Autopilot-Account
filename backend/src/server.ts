@@ -1,5 +1,5 @@
-import "dotenv/config";
 import express, { Request, Response, NextFunction } from "express";
+import cors from "cors";
 import {
   getStrategiesForToken,
   getBestStrategy,
@@ -53,9 +53,22 @@ import {
 } from "./scheduler";
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
+
+// ============================================================================
+// Wallet Registry (in-memory storage)
+// ============================================================================
+
+interface RegisteredWallet {
+  wallet: string;
+  owner: string;
+  createdAt: Date;
+}
+
+const walletRegistry = new Map<string, RegisteredWallet>();
 
 // Middleware
+app.use(cors()); // Enable CORS for all origins
 app.use(express.json());
 
 // Request logging middleware
@@ -149,7 +162,9 @@ app.get("/", (_req: Request, res: Response) => {
     message: "AutoYield Backend is running",
     endpoints: [
       "/health",
-      "/automation-key",
+      "/register",
+      "/wallets",
+      "/wallet/:address",
       "/strategies",
       "/recommend",
       "/recommendations",
@@ -163,6 +178,7 @@ app.get("/", (_req: Request, res: Response) => {
       "/admin/cache-status",
     ],
     scheduler: getSchedulerStatus(),
+    registeredWallets: walletRegistry.size,
   });
 });
 
@@ -174,32 +190,87 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
 });
 
-/**
- * GET /automation-key
- * Returns the public address of the automation session key.
- * Frontend needs this to pass to the factory during wallet creation.
- *
- * The session key has restricted permissions - it can only call:
- *   - rebalance() - Move excess checking balance into yield
- *   - migrateStrategy() - Move funds between whitelisted vaults
- *   - sweepDustAndCompound() - Consolidate dust tokens into yield
- *
- * It CANNOT transfer funds or change user settings.
- */
-app.get("/automation-key", (_req: Request, res: Response) => {
-  const publicAddress = process.env.AUTOMATION_PUBLIC_ADDRESS;
+// ============================================================================
+// Wallet Registry Endpoints
+// ============================================================================
 
-  if (!publicAddress) {
+/**
+ * POST /register
+ * Register a new wallet after on-chain creation
+ *
+ * Body:
+ *   - wallet: string (required, smart wallet address)
+ *   - owner: string (required, EOA owner address)
+ */
+app.post("/register", (req: Request, res: Response) => {
+  const { wallet, owner } = req.body;
+
+  // Validate required fields
+  if (!wallet || !owner) {
     const errorResponse: ErrorResponse = {
-      error: "Automation key not configured. Run: npm run generate-session-key",
+      error: "Missing required fields: wallet and owner",
     };
-    return res.status(500).json(errorResponse);
+    return res.status(400).json(errorResponse);
   }
 
-  return res.json({
-    address: publicAddress,
-    permissions: ["rebalance", "migrateStrategy", "sweepDustAndCompound"],
+  // Validate wallet address format
+  if (!isValidWalletAddress(wallet)) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid wallet address format. Must be 0x followed by 40 hex characters.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  // Validate owner address format
+  if (!isValidWalletAddress(owner)) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid owner address format. Must be 0x followed by 40 hex characters.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  const walletLower = wallet.toLowerCase();
+  const ownerLower = owner.toLowerCase();
+
+  // Idempotent: update if exists, create if not
+  walletRegistry.set(walletLower, {
+    wallet: walletLower,
+    owner: ownerLower,
+    createdAt: walletRegistry.get(walletLower)?.createdAt || new Date(),
   });
+
+  console.log(`[registry] Wallet registered: ${walletLower} (owner: ${ownerLower})`);
+
+  return res.json({ ok: true, wallet: walletLower });
+});
+
+/**
+ * GET /wallets
+ * List all registered wallet addresses
+ * Used by scheduler to know which wallets to automate
+ */
+app.get("/wallets", (_req: Request, res: Response) => {
+  const wallets = Array.from(walletRegistry.keys());
+  return res.json(wallets);
+});
+
+/**
+ * GET /wallet/:address
+ * Get details for a specific registered wallet
+ */
+app.get("/wallet/:address", (req: Request, res: Response) => {
+  const address = req.params.address.toLowerCase();
+
+  const wallet = walletRegistry.get(address);
+
+  if (!wallet) {
+    const errorResponse: ErrorResponse = {
+      error: `Wallet not found: ${address}`,
+    };
+    return res.status(404).json(errorResponse);
+  }
+
+  return res.json(wallet);
 });
 
 /**
@@ -913,12 +984,15 @@ app.listen(PORT, () => {
 ╠═══════════════════════════════════════════════════════════╣
 ║  Endpoints:                                               ║
 ║    GET  /health              - Health check               ║
-║    GET  /automation-key      - Session key for frontend   ║
 ║    GET  /strategies          - List strategies by token   ║
 ║    GET  /recommend           - Best strategy (highest APY)║
 ║    GET  /recommendations     - Strategies by prefs (B2)   ║
 ║    GET  /tokens              - Available tokens on chain  ║
 ║    GET  /chains              - Supported chain IDs        ║
+║  Wallet Registry:                                         ║
+║    POST /register            - Register a new wallet      ║
+║    GET  /wallets             - List registered wallets    ║
+║    GET  /wallet/:address     - Get wallet details         ║
 ║  Scheduler (B3):                                          ║
 ║    GET  /rebalance-tasks     - List all tasks             ║
 ║    POST /rebalance-tasks     - Create a task              ║

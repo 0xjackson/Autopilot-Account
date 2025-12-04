@@ -5,6 +5,7 @@ import "forge-std/Script.sol";
 import {AutoYieldModule} from "../src/AutoYieldModule.sol";
 import {MorphoAdapter} from "../src/adapters/MorphoAdapter.sol";
 import {AutopilotFactory} from "../src/AutopilotFactory.sol";
+import {AutomationValidator} from "../src/AutomationValidator.sol";
 
 /**
  * @title Deploy
@@ -62,12 +63,18 @@ contract Deploy is Script {
         console.log("   -> Vault:", adapter.vault());
         console.log("   -> Asset:", adapter.asset());
 
-        // 3. Deploy AutopilotFactory
-        console.log("3. Deploying AutopilotFactory...");
+        // 3. Deploy AutomationValidator
+        console.log("3. Deploying AutomationValidator...");
+        AutomationValidator validator = new AutomationValidator();
+        console.log("   AutomationValidator:", address(validator));
+
+        // 4. Deploy AutopilotFactory
+        console.log("4. Deploying AutopilotFactory...");
         AutopilotFactory factory = new AutopilotFactory(
             KERNEL_FACTORY,
             ECDSA_VALIDATOR,
             address(module),
+            address(validator),
             address(adapter),
             automationKey
         );
@@ -79,14 +86,15 @@ contract Deploy is Script {
         console.log("");
         console.log("=== Deployment Complete ===");
         console.log("");
-        console.log("AutoYieldModule:  ", address(module));
-        console.log("MorphoAdapter:    ", address(adapter));
-        console.log("AutopilotFactory: ", address(factory));
+        console.log("AutoYieldModule:     ", address(module));
+        console.log("MorphoAdapter:       ", address(adapter));
+        console.log("AutomationValidator: ", address(validator));
+        console.log("AutopilotFactory:    ", address(factory));
         console.log("");
-        console.log("Morpho Vault:     ", MORPHO_VAULT_MOONWELL_USDC);
-        console.log("USDC:             ", USDC);
-        console.log("Kernel Factory:   ", KERNEL_FACTORY);
-        console.log("ECDSA Validator:  ", ECDSA_VALIDATOR);
+        console.log("Morpho Vault:        ", MORPHO_VAULT_MOONWELL_USDC);
+        console.log("USDC:                ", USDC);
+        console.log("Kernel Factory:      ", KERNEL_FACTORY);
+        console.log("ECDSA Validator:     ", ECDSA_VALIDATOR);
         console.log("");
         console.log("Next steps:");
         console.log("1. Verify contracts on Basescan");

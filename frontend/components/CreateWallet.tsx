@@ -1,307 +1,175 @@
 "use client";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useConnect, useAccount, useDisconnect } from "wagmi";
+import { useEffect, useState } from "react";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useSwitchChain } from "wagmi";
+import { keccak256, toBytes } from "viem";
+import { base } from "wagmi/chains";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
-import { useWalletCreation } from "@/hooks/useWalletCreation";
-import { CHAIN_CONFIG } from "@/lib/constants";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CONTRACTS, FACTORY_ABI } from "@/lib/constants";
+import { saveWallet } from "@/lib/services/wallet";
 
-/**
- * CreateWallet Component
- *
- * Implements the F1 wallet creation flow:
- * 1. Connect EOA wallet (Coinbase Wallet / MetaMask)
- * 2. Click "Create Autopilot Wallet"
- * 3. Sign message and deploy smart account
- * 4. Show success with new wallet address
- */
 export function CreateWallet() {
-  const router = useRouter();
-  const { connectors, connect, isPending: isConnecting } = useConnect();
-  const { isConnected, address } = useAccount();
-  const { disconnect } = useDisconnect();
+  const { address: ownerAddress, isConnected, chainId } = useAccount();
+  const { switchChain } = useSwitchChain();
+  const [hasRedirected, setHasRedirected] = useState(false);
 
-  const {
-    status,
-    smartAccountAddress,
-    transactionHash,
-    error,
-    createWallet,
-    reset,
-  } = useWalletCreation();
+  // Check if on correct chain
+  const isOnBase = chainId === base.id;
 
-  // Navigate to dashboard after successful wallet creation
+  // Generate salt from owner address
+  const salt = ownerAddress ? keccak256(toBytes(ownerAddress)) : null;
+
+  // Check if user already has an account
+  const { data: existingAccount, isLoading: isCheckingAccount } = useReadContract({
+    address: CONTRACTS.FACTORY,
+    abi: FACTORY_ABI,
+    functionName: "accountOf",
+    args: ownerAddress ? [ownerAddress] : undefined,
+    query: {
+      enabled: !!ownerAddress,
+    },
+  });
+
+  // Predict the wallet address
+  const { data: predictedAddress } = useReadContract({
+    address: CONTRACTS.FACTORY,
+    abi: FACTORY_ABI,
+    functionName: "getAddress",
+    args: ownerAddress && salt ? [ownerAddress, salt] : undefined,
+    query: {
+      enabled: !!ownerAddress && !!salt,
+    },
+  });
+
+  const { writeContract, data: hash, isPending, error } = useWriteContract();
+
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash,
+  });
+
+  // Check if user already has an account and redirect
   useEffect(() => {
-    if (status === "success" && smartAccountAddress) {
-      // Store the smart account address in localStorage for now
-      // In production, this would be managed by a proper state management solution
-      localStorage.setItem("autopilotWalletAddress", smartAccountAddress);
+    if (existingAccount && existingAccount !== "0x0000000000000000000000000000000000000000" && ownerAddress && !hasRedirected) {
+      saveWallet(existingAccount as `0x${string}`, ownerAddress);
+      setHasRedirected(true);
+      window.location.href = "/dashboard";
     }
-  }, [status, smartAccountAddress]);
+  }, [existingAccount, ownerAddress, hasRedirected]);
 
-  const handleGoToDashboard = () => {
-    router.push("/dashboard");
+  // Switch to Base network
+  const handleSwitchChain = () => {
+    switchChain({ chainId: base.id });
   };
 
-  const handleTryAgain = () => {
-    reset();
+  // Create the wallet - uses msg.sender as owner
+  const handleCreate = () => {
+    if (!salt || !isOnBase) return;
+
+    writeContract({
+      address: CONTRACTS.FACTORY,
+      abi: FACTORY_ABI,
+      functionName: "createAccount",
+      args: [salt],
+    });
   };
 
-  // Step 1: Connect wallet
+  // When transaction confirms, save the wallet and redirect
+  useEffect(() => {
+    if (isSuccess && hash && ownerAddress && predictedAddress && !hasRedirected) {
+      saveWallet(predictedAddress as `0x${string}`, ownerAddress);
+      setHasRedirected(true);
+      window.location.href = "/dashboard";
+    }
+  }, [isSuccess, hash, ownerAddress, predictedAddress, hasRedirected]);
+
   if (!isConnected) {
     return (
-      <Card className="max-w-md mx-auto">
-        <CardHeader className="text-center">
-          <CardTitle>Create Autopilot Wallet</CardTitle>
+      <Card>
+        <CardHeader>
+          <CardTitle>Connect Wallet</CardTitle>
           <CardDescription>
-            Connect your wallet to create a smart account on Base that
-            automatically manages your idle capital.
+            Connect your wallet to create an Autopilot account
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-3">
-            {connectors.map((connector) => (
-              <Button
-                key={connector.uid}
-                onClick={() => connect({ connector })}
-                disabled={isConnecting}
-                variant="outline"
-                className="w-full justify-start gap-3 h-12"
-              >
-                {isConnecting ? (
-                  <Spinner size="sm" />
-                ) : (
-                  <WalletIcon name={connector.name} />
-                )}
-                {connector.name}
-              </Button>
-            ))}
-          </div>
-          <p className="text-xs text-gray-500 text-center mt-4">
-            Your existing wallet will be the owner of your new Autopilot smart
-            account.
-          </p>
-        </CardContent>
       </Card>
     );
   }
 
-  // Step 2: Create smart wallet (connected but not created yet)
-  if (status === "idle") {
+  // Show loading while checking for existing account
+  if (isCheckingAccount) {
     return (
-      <Card className="max-w-md mx-auto">
-        <CardHeader className="text-center">
-          <CardTitle>Create Autopilot Wallet</CardTitle>
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Checking Account...</CardTitle>
           <CardDescription>
-            Your wallet is connected. Now create your Autopilot smart account.
+            Looking for existing Autopilot wallet
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="bg-gray-800 rounded-lg p-4">
-            <p className="text-sm text-gray-400">Connected Wallet</p>
-            <p className="font-mono text-sm mt-1 truncate">{address}</p>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-start gap-3 text-sm">
-              <CheckIcon className="h-5 w-5 text-green-400 flex-shrink-0 mt-0.5" />
-              <span>Gasless transactions via Base Paymaster</span>
-            </div>
-            <div className="flex items-start gap-3 text-sm">
-              <CheckIcon className="h-5 w-5 text-green-400 flex-shrink-0 mt-0.5" />
-              <span>Automatic yield on idle USDC</span>
-            </div>
-            <div className="flex items-start gap-3 text-sm">
-              <CheckIcon className="h-5 w-5 text-green-400 flex-shrink-0 mt-0.5" />
-              <span>One-click payments with auto-rebalancing</span>
-            </div>
-            <div className="flex items-start gap-3 text-sm">
-              <CheckIcon className="h-5 w-5 text-green-400 flex-shrink-0 mt-0.5" />
-              <span>Dust token cleanup</span>
-            </div>
-          </div>
-
-          <Button onClick={createWallet} className="w-full h-12">
-            Create Autopilot Wallet
-          </Button>
-
-          <Button
-            onClick={() => disconnect()}
-            variant="ghost"
-            className="w-full text-gray-400 hover:text-white"
-          >
-            Disconnect Wallet
-          </Button>
-        </CardContent>
       </Card>
     );
   }
 
-  // Step 3: Creating wallet (in progress)
-  if (status === "checking" || status === "creating") {
+  // If user already has an account, show redirect message
+  if (existingAccount && existingAccount !== "0x0000000000000000000000000000000000000000") {
     return (
-      <Card className="max-w-md mx-auto">
-        <CardHeader className="text-center">
-          <CardTitle>Creating Autopilot Wallet</CardTitle>
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Account Found</CardTitle>
           <CardDescription>
-            {status === "checking"
-              ? "Checking for existing wallet..."
-              : "Deploying your smart account on Base..."}
+            Redirecting to your dashboard...
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col items-center py-8">
-          <Spinner size="lg" className="mb-4" />
-          <p className="text-sm text-gray-400">
-            {status === "checking"
-              ? "This will only take a moment"
-              : "Please wait while your wallet is being created"}
-          </p>
-        </CardContent>
       </Card>
     );
   }
 
-  // Step 4: Error state
-  if (status === "error") {
-    return (
-      <Card className="max-w-md mx-auto">
-        <CardHeader className="text-center">
-          <CardTitle>Creation Failed</CardTitle>
-          <CardDescription>
-            There was an issue creating your wallet.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Alert variant="destructive">
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-
-          <Button onClick={handleTryAgain} className="w-full">
-            Try Again
-          </Button>
-
-          <Button
-            onClick={() => disconnect()}
-            variant="ghost"
-            className="w-full text-gray-400 hover:text-white"
-          >
-            Disconnect Wallet
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Step 5: Success state
-  if (status === "success" && smartAccountAddress) {
-    return (
-      <Card className="max-w-md mx-auto">
-        <CardHeader className="text-center">
-          <div className="mx-auto w-12 h-12 bg-green-900/50 rounded-full flex items-center justify-center mb-4">
-            <CheckIcon className="h-6 w-6 text-green-400" />
+  return (
+    <Card className="w-full max-w-md">
+      <CardHeader>
+        <CardTitle>Create Autopilot Wallet</CardTitle>
+        <CardDescription>
+          Deploy your smart wallet on Base with auto-yield enabled
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!isOnBase && (
+          <div className="bg-yellow-900/50 border border-yellow-600 rounded-lg p-3 text-sm text-yellow-200">
+            You're not on Base network. Click below to switch.
           </div>
-          <CardTitle>Wallet Created!</CardTitle>
-          <CardDescription>
-            Your Autopilot smart account is ready to use.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="bg-gray-800 rounded-lg p-4">
-            <p className="text-sm text-gray-400">Your Autopilot Wallet</p>
-            <p className="font-mono text-sm mt-1 break-all">
-              {smartAccountAddress}
-            </p>
-          </div>
+        )}
 
-          {transactionHash && (
-            <a
-              href={`${CHAIN_CONFIG.BLOCK_EXPLORER}/tx/${transactionHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-center text-sm text-blue-400 hover:text-blue-300"
-            >
-              View transaction on BaseScan
-            </a>
+        <div className="text-sm text-gray-400">
+          <p>Owner: {ownerAddress?.slice(0, 6)}...{ownerAddress?.slice(-4)}</p>
+          {predictedAddress && (
+            <p>Wallet address: {(predictedAddress as string).slice(0, 6)}...{(predictedAddress as string).slice(-4)}</p>
           )}
+          <p className="mt-1">Network: {isOnBase ? "Base" : `Wrong chain (${chainId})`}</p>
+        </div>
 
-          <Alert variant="success">
-            <AlertTitle>Next Steps</AlertTitle>
-            <AlertDescription>
-              Send USDC to your new wallet address to start earning yield
-              automatically.
-            </AlertDescription>
-          </Alert>
-
-          <Button onClick={handleGoToDashboard} className="w-full h-12">
-            Go to Dashboard
+        {!isOnBase ? (
+          <Button
+            onClick={handleSwitchChain}
+            className="w-full"
+          >
+            Switch to Base Network
           </Button>
-        </CardContent>
-      </Card>
-    );
-  }
+        ) : (
+          <Button
+            onClick={handleCreate}
+            disabled={isPending || isConfirming || !salt}
+            className="w-full"
+          >
+            {isPending ? "Waiting for signature..." :
+             isConfirming ? "Creating wallet..." :
+             "Create Wallet"}
+          </Button>
+        )}
 
-  return null;
-}
-
-// Helper components
-function CheckIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-    </svg>
-  );
-}
-
-function WalletIcon({ name }: { name: string }) {
-  // Simple wallet icon - in production you'd use actual wallet logos
-  const iconClass = "h-5 w-5";
-
-  if (name.toLowerCase().includes("coinbase")) {
-    return (
-      <div className={`${iconClass} bg-blue-600 rounded-full flex items-center justify-center`}>
-        <span className="text-white text-xs font-bold">C</span>
-      </div>
-    );
-  }
-
-  if (name.toLowerCase().includes("metamask")) {
-    return (
-      <div className={`${iconClass} bg-orange-500 rounded-full flex items-center justify-center`}>
-        <span className="text-white text-xs font-bold">M</span>
-      </div>
-    );
-  }
-
-  return (
-    <svg
-      className={iconClass}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-      />
-    </svg>
+        {error && (
+          <p className="text-red-400 text-sm">{error.message}</p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
