@@ -22,8 +22,10 @@ import { CHAIN_CONFIG } from "@/lib/constants";
  * Implements the F1 wallet creation flow:
  * 1. Connect EOA wallet (Coinbase Wallet / MetaMask)
  * 2. Click "Create Autopilot Wallet"
- * 3. Sign message and deploy smart account
- * 4. Show success with new wallet address
+ * 3. Prepare transaction via createSmartWallet()
+ * 4. Submit transaction (when factory is deployed)
+ * 5. Save predictedAddress to localStorage
+ * 6. Redirect to dashboard
  */
 export function CreateWallet() {
   const router = useRouter();
@@ -36,6 +38,8 @@ export function CreateWallet() {
     smartAccountAddress,
     transactionHash,
     error,
+    preparedTx,
+    isFactoryDeployed,
     createWallet,
     reset,
   } = useWalletCreation();
@@ -43,9 +47,8 @@ export function CreateWallet() {
   // Navigate to dashboard after successful wallet creation
   useEffect(() => {
     if (status === "success" && smartAccountAddress) {
-      // Store the smart account address in localStorage for now
-      // In production, this would be managed by a proper state management solution
-      localStorage.setItem("autopilotWalletAddress", smartAccountAddress);
+      // Address is already saved to localStorage by the hook
+      console.log("[CreateWallet] Wallet created successfully:", smartAccountAddress);
     }
   }, [status, smartAccountAddress]);
 
@@ -55,6 +58,24 @@ export function CreateWallet() {
 
   const handleTryAgain = () => {
     reset();
+  };
+
+  // Helper to get status message
+  const getStatusMessage = (): string => {
+    switch (status) {
+      case "checking":
+        return "Checking for existing wallet...";
+      case "preparing":
+        return "Preparing wallet creation transaction...";
+      case "creating":
+        return "Deploying your smart account on Base...";
+      case "confirming":
+        return "Waiting for transaction confirmation...";
+      case "registering":
+        return "Registering automation key...";
+      default:
+        return "Please wait...";
+    }
   };
 
   // Step 1: Connect wallet
@@ -112,6 +133,15 @@ export function CreateWallet() {
             <p className="font-mono text-sm mt-1 truncate">{address}</p>
           </div>
 
+          {!isFactoryDeployed && (
+            <Alert>
+              <AlertTitle>Development Mode</AlertTitle>
+              <AlertDescription>
+                Factory contract not deployed. Wallet creation will be simulated.
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="space-y-3">
             <div className="flex items-start gap-3 text-sm">
               <CheckIcon className="h-5 w-5 text-green-400 flex-shrink-0 mt-0.5" />
@@ -148,23 +178,50 @@ export function CreateWallet() {
   }
 
   // Step 3: Creating wallet (in progress)
-  if (status === "checking" || status === "creating") {
+  if (
+    status === "checking" ||
+    status === "preparing" ||
+    status === "creating" ||
+    status === "confirming" ||
+    status === "registering"
+  ) {
     return (
       <Card className="max-w-md mx-auto">
         <CardHeader className="text-center">
           <CardTitle>Creating Autopilot Wallet</CardTitle>
-          <CardDescription>
-            {status === "checking"
-              ? "Checking for existing wallet..."
-              : "Deploying your smart account on Base..."}
-          </CardDescription>
+          <CardDescription>{getStatusMessage()}</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col items-center py-8">
+        <CardContent className="flex flex-col items-center py-8 space-y-4">
           <Spinner size="lg" className="mb-4" />
-          <p className="text-sm text-gray-400">
-            {status === "checking"
-              ? "This will only take a moment"
-              : "Please wait while your wallet is being created"}
+
+          {/* Show predicted address once available */}
+          {preparedTx?.predictedAddress && (
+            <div className="w-full bg-gray-800 rounded-lg p-4">
+              <p className="text-sm text-gray-400">Predicted Wallet Address</p>
+              <p className="font-mono text-xs mt-1 break-all">
+                {preparedTx.predictedAddress}
+              </p>
+            </div>
+          )}
+
+          {/* Show transaction hash if confirming */}
+          {transactionHash && (
+            <a
+              href={`${CHAIN_CONFIG.BLOCK_EXPLORER}/tx/${transactionHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-blue-400 hover:text-blue-300"
+            >
+              View pending transaction
+            </a>
+          )}
+
+          <p className="text-sm text-gray-400 text-center">
+            {status === "creating"
+              ? "Please confirm the transaction in your wallet"
+              : status === "confirming"
+              ? "Transaction submitted, waiting for confirmation..."
+              : "This will only take a moment"}
           </p>
         </CardContent>
       </Card>
@@ -233,6 +290,16 @@ export function CreateWallet() {
             >
               View transaction on BaseScan
             </a>
+          )}
+
+          {!transactionHash && !isFactoryDeployed && (
+            <Alert>
+              <AlertTitle>Development Mode</AlertTitle>
+              <AlertDescription>
+                Wallet was created in simulation mode. Deploy the factory contract
+                for real transactions.
+              </AlertDescription>
+            </Alert>
           )}
 
           <Alert variant="success">

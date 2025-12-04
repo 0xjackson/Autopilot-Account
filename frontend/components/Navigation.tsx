@@ -7,7 +7,6 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/pay", label: "Pay" },
   { href: "/settings", label: "Settings" },
-  { href: "/merchant", label: "Merchant Demo" },
 ];
 
 export function Navigation() {

@@ -1,4 +1,4 @@
-import { type Address } from "viem";
+import { type Address, type Abi } from "viem";
 
 /**
  * Contract addresses for Base Sepolia
@@ -20,9 +20,66 @@ export const CONTRACTS = {
   // USDC on Base Sepolia
   USDC: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" as Address,
 
-  // EntryPoint v0.6
-  ENTRY_POINT: "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789" as Address,
+  // EntryPoint v0.7 (per PRD)
+  ENTRY_POINT: "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address,
 } as const;
+
+/**
+ * Placeholder contract addresses - will be filled after deployment
+ * Use these when checking if contracts are ready
+ */
+export const FACTORY_ADDRESS: Address | null =
+  CONTRACTS.FACTORY === "0x0000000000000000000000000000000000000000"
+    ? null
+    : CONTRACTS.FACTORY;
+
+export const AUTOMATION_MODULE_ADDRESS: Address | null =
+  CONTRACTS.MODULE === "0x0000000000000000000000000000000000000000"
+    ? null
+    : CONTRACTS.MODULE;
+
+/**
+ * AutopilotFactory ABI - placeholder until contract is deployed
+ * Will be replaced with actual ABI from contract compilation
+ *
+ * Per PRD Section 4.2: createAccountFor(owner, salt) returns account address
+ */
+export const FACTORY_ABI: Abi | null = [
+  {
+    name: "createAccountFor",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "salt", type: "bytes32" },
+    ],
+    outputs: [{ name: "account", type: "address" }],
+  },
+  {
+    name: "getAddress",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "salt", type: "bytes32" },
+    ],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    name: "accountOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+] as const satisfies Abi;
+
+/**
+ * Check if factory contract is deployed and ready
+ */
+export function isFactoryReady(): boolean {
+  return FACTORY_ADDRESS !== null;
+}
 
 /**
  * Default wallet configuration
