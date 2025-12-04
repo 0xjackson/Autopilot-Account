@@ -7,7 +7,6 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/send", label: "Send" },
   { href: "/settings", label: "Settings" },
-  { href: "/merchant", label: "Merchant Demo" },
 ];
 
 export function Navigation() {
