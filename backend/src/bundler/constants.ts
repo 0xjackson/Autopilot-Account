@@ -1,12 +1,4 @@
-/**
- * Contract addresses and ABIs for the Autopilot system
- */
-
 import type { Address } from "viem";
-
-// =============================================================================
-// Contract Addresses (Base Mainnet)
-// =============================================================================
 
 export const CONTRACTS = {
   FACTORY: "0xcf10279BAA0d5407Dbb637517d23055A55E72923" as Address,
@@ -17,13 +9,8 @@ export const CONTRACTS = {
   ENTRYPOINT: "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address,
 } as const;
 
-// Base chain ID
 export const CHAIN_ID = 8453n;
 export const CHAIN_ID_HEX = "0x2105";
-
-// =============================================================================
-// ABIs
-// =============================================================================
 
 export const AUTO_YIELD_MODULE_ABI = [
   {

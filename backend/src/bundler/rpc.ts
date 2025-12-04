@@ -1,7 +1,3 @@
-/**
- * CDP Bundler and Paymaster RPC calls
- */
-
 import { createPublicClient, http, toHex, type Hex, type Address } from "viem";
 import { base } from "viem/chains";
 import { CONTRACTS, ENTRYPOINT_ABI, CHAIN_ID_HEX } from "./constants";
@@ -12,24 +8,12 @@ import {
   buildPaymasterAndData,
 } from "./userOp";
 
-// =============================================================================
-// Configuration
-// =============================================================================
-
 const CDP_BUNDLER_URL = process.env.CDP_BUNDLER_URL;
-
-// =============================================================================
-// Public Client
-// =============================================================================
 
 export const publicClient = createPublicClient({
   chain: base,
   transport: http("https://mainnet.base.org"),
 });
-
-// =============================================================================
-// Types
-// =============================================================================
 
 export interface GasEstimate {
   preVerificationGas: Hex;
@@ -52,10 +36,6 @@ export interface UserOpReceipt {
   };
   success: boolean;
 }
-
-// =============================================================================
-// Base RPC Call
-// =============================================================================
 
 async function bundlerRpc<T>(method: string, params: unknown[]): Promise<T> {
   if (!CDP_BUNDLER_URL) {
@@ -86,33 +66,16 @@ async function bundlerRpc<T>(method: string, params: unknown[]): Promise<T> {
   return data.result as T;
 }
 
-// =============================================================================
-// Nonce
-// =============================================================================
-
-/**
- * Get the current nonce for a wallet from EntryPoint
- */
 export async function getNonce(walletAddress: Address): Promise<bigint> {
   const key = getNonceKey(CONTRACTS.VALIDATOR);
-
-  const nonce = await publicClient.readContract({
+  return publicClient.readContract({
     address: CONTRACTS.ENTRYPOINT,
     abi: ENTRYPOINT_ABI,
     functionName: "getNonce",
     args: [walletAddress, key],
   });
-
-  return nonce;
 }
 
-// =============================================================================
-// Gas Estimation
-// =============================================================================
-
-/**
- * Get current gas prices from the network
- */
 export async function getGasPrices(): Promise<{
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
@@ -124,9 +87,6 @@ export async function getGasPrices(): Promise<{
   };
 }
 
-/**
- * Estimate gas for a UserOperation
- */
 export async function estimateUserOperationGas(
   userOp: PackedUserOperation
 ): Promise<GasEstimate> {
@@ -136,13 +96,6 @@ export async function estimateUserOperationGas(
   ]);
 }
 
-// =============================================================================
-// Paymaster
-// =============================================================================
-
-/**
- * Get paymaster stub data (for gas estimation)
- */
 export async function getPaymasterStubData(
   userOp: Partial<PackedUserOperation>
 ): Promise<Hex> {
@@ -168,9 +121,6 @@ export async function getPaymasterStubData(
   );
 }
 
-/**
- * Get final paymaster data (after gas estimation)
- */
 export async function getPaymasterData(
   userOp: Omit<PackedUserOperation, "signature" | "paymasterAndData">
 ): Promise<Hex> {
@@ -196,13 +146,6 @@ export async function getPaymasterData(
   );
 }
 
-// =============================================================================
-// Submission
-// =============================================================================
-
-/**
- * Submit UserOp to bundler
- */
 export async function sendUserOperation(userOp: PackedUserOperation): Promise<Hex> {
   return bundlerRpc<Hex>("eth_sendUserOperation", [
     serializeUserOp(userOp),
@@ -210,18 +153,12 @@ export async function sendUserOperation(userOp: PackedUserOperation): Promise<He
   ]);
 }
 
-/**
- * Get UserOp receipt
- */
 export async function getUserOperationReceipt(
   userOpHash: Hex
 ): Promise<UserOpReceipt | null> {
   return bundlerRpc<UserOpReceipt | null>("eth_getUserOperationReceipt", [userOpHash]);
 }
 
-/**
- * Wait for UserOp receipt with polling
- */
 export async function waitForUserOperationReceipt(
   userOpHash: Hex,
   timeout = 60000,
@@ -231,28 +168,15 @@ export async function waitForUserOperationReceipt(
 
   while (Date.now() - startTime < timeout) {
     const receipt = await getUserOperationReceipt(userOpHash);
-
-    if (receipt) {
-      return receipt;
-    }
-
+    if (receipt) return receipt;
     await new Promise((resolve) => setTimeout(resolve, pollInterval));
   }
 
   throw new Error(`UserOp receipt timeout after ${timeout}ms`);
 }
 
-// =============================================================================
-// Health Check
-// =============================================================================
-
-/**
- * Check if bundler is configured and reachable
- */
 export async function isBundlerHealthy(): Promise<boolean> {
-  if (!CDP_BUNDLER_URL) {
-    return false;
-  }
+  if (!CDP_BUNDLER_URL) return false;
 
   try {
     const entryPoints = await bundlerRpc<Address[]>("eth_supportedEntryPoints", []);
