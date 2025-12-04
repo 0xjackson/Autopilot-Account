@@ -4,61 +4,44 @@ pragma solidity ^0.8.23;
 /**
  * @title IYieldAdapter
  * @notice Interface for yield adapters that wrap ERC-4626 vaults or similar yield sources
- * @dev Provides a consistent interface for the AutoYieldModule to interact with various yield strategies
+ * @dev Each adapter instance handles ONE token and ONE vault.
+ *      This keeps the interface simple and adapters stateless.
+ *      Deploy multiple adapters for multiple vaults.
  */
 interface IYieldAdapter {
     /**
      * @notice Deposit tokens into the yield strategy
-     * @param token Address of the token to deposit
-     * @param amount Amount to deposit
-     * @return shares Amount of shares/receipt tokens received
+     * @dev Caller must have approved this adapter to spend the tokens.
+     *      The adapter pulls tokens from caller, deposits to vault,
+     *      and vault shares are credited to the CALLER (not the adapter).
+     * @param amount Amount of underlying tokens to deposit
+     * @return shares Amount of vault shares received
      */
-    function deposit(address token, uint256 amount) external returns (uint256 shares);
+    function deposit(uint256 amount) external returns (uint256 shares);
 
     /**
      * @notice Withdraw tokens from the yield strategy
-     * @param token Address of the token to withdraw
+     * @dev Burns caller's vault shares and sends underlying tokens to caller.
      * @param amount Amount of underlying tokens to withdraw
-     * @return actualAmount Actual amount withdrawn (may differ due to fees/slippage)
+     * @return actualAmount Actual amount withdrawn (may differ due to rounding)
      */
-    function withdraw(address token, uint256 amount) external returns (uint256 actualAmount);
+    function withdraw(uint256 amount) external returns (uint256 actualAmount);
 
     /**
-     * @notice Get the total value of deposited assets for an account
-     * @param token Address of the underlying token
-     * @param account Address of the account to check
-     * @return value Total value in terms of the underlying token
+     * @notice Get total value of caller's deposits in underlying token terms
+     * @return value Total value (shares converted to underlying)
      */
-    function totalValue(address token, address account) external view returns (uint256 value);
+    function totalValue() external view returns (uint256 value);
 
     /**
-     * @notice Get the current balance of shares for an account
-     * @param token Address of the underlying token
-     * @param account Address of the account to check
-     * @return shares Balance of shares/receipt tokens
+     * @notice Get the underlying asset address (e.g., USDC)
+     * @return The token address this adapter accepts
      */
-    function shareBalance(address token, address account) external view returns (uint256 shares);
+    function asset() external view returns (address);
 
     /**
-     * @notice Convert shares to underlying token amount
-     * @param token Address of the underlying token
-     * @param shares Amount of shares
-     * @return amount Equivalent amount of underlying tokens
+     * @notice Get the vault address this adapter wraps
+     * @return The vault contract address
      */
-    function sharesToUnderlying(address token, uint256 shares) external view returns (uint256 amount);
-
-    /**
-     * @notice Convert underlying token amount to shares
-     * @param token Address of the underlying token
-     * @param amount Amount of underlying tokens
-     * @return shares Equivalent amount of shares
-     */
-    function underlyingToShares(address token, uint256 amount) external view returns (uint256 shares);
-
-    /**
-     * @notice Get the address of the underlying vault/strategy
-     * @param token Address of the underlying token
-     * @return vault Address of the vault contract
-     */
-    function getVault(address token) external view returns (address vault);
+    function vault() external view returns (address);
 }

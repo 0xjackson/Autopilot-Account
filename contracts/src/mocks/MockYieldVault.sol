@@ -2,180 +2,59 @@
 pragma solidity ^0.8.23;
 
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title MockYieldVault
- * @notice Mock ERC-4626-like vault for testing and demo purposes
- * @dev Implements both the vault logic and IYieldAdapter interface for simplicity.
- *      In production, these would be separate contracts.
+ * @notice Mock ERC-4626-like vault for testing and demos
+ * @dev Implements IYieldAdapter directly (acts as both vault AND adapter).
  *
- *      This mock vault:
- *      - Accepts USDC deposits
+ *      Features:
+ *      - Accepts deposits of underlying token (e.g., USDC)
  *      - Issues shares 1:1 initially
- *      - Simulates yield by allowing manual share price increases
- *      - Implements IYieldAdapter so it can be used directly
+ *      - Owner can call accrueYield() to simulate yield (increases share price)
+ *      - Real ERC20 transfers (not just accounting)
  */
 contract MockYieldVault is IYieldAdapter {
+    using SafeERC20 for IERC20;
+
     // ============ Errors ============
     error InsufficientShares();
-    error InsufficientAllowance();
-    error TransferFailed();
+    error InsufficientBalance();
 
     // ============ Events ============
-    event Deposit(address indexed caller, address indexed owner, uint256 assets, uint256 shares);
-    event Withdraw(address indexed caller, address indexed receiver, address indexed owner, uint256 assets, uint256 shares);
-    event YieldAccrued(uint256 newSharePrice);
+    event Deposit(address indexed account, uint256 assets, uint256 shares);
+    event Withdraw(address indexed account, uint256 assets, uint256 shares);
+    event YieldAccrued(uint256 oldSharePrice, uint256 newSharePrice);
 
     // ============ State ============
 
-    /// @notice The underlying asset (USDC)
-    address public immutable asset;
+    /// @notice The underlying asset (e.g., USDC)
+    IERC20 public immutable _asset;
 
-    /// @notice Total shares minted
+    /// @notice Total shares outstanding
     uint256 public totalShares;
 
     /// @notice Shares per account
     mapping(address => uint256) public shares;
 
-    /// @notice Share price in underlying (scaled by 1e18)
-    /// @dev Starts at 1e18 (1:1), increases to simulate yield
+    /// @notice Share price scaled by 1e18 (starts at 1:1)
     uint256 public sharePrice = 1e18;
 
-    /// @notice Name of the vault token
-    string public name = "Mock Yield Vault";
+    /// @notice Vault name
+    string public constant name = "Mock Yield Vault";
 
-    /// @notice Symbol of the vault token
-    string public symbol = "myvUSDC";
+    /// @notice Vault symbol
+    string public constant symbol = "mockVault";
 
     // ============ Constructor ============
 
     /**
-     * @notice Initialize the mock vault
-     * @param _asset Address of the underlying asset (USDC)
+     * @param assetToken Address of the underlying token (USDC)
      */
-    constructor(address _asset) {
-        asset = _asset;
-    }
-
-    // ============ ERC-4626-like Functions ============
-
-    /**
-     * @notice Deposit assets and receive shares
-     * @param assets Amount of underlying to deposit
-     * @param receiver Address to receive shares
-     * @return sharesOut Amount of shares minted
-     */
-    function depositAssets(uint256 assets, address receiver) external returns (uint256 sharesOut) {
-        sharesOut = convertToShares(assets);
-
-        // TODO: Transfer assets from caller
-        // IERC20(asset).transferFrom(msg.sender, address(this), assets);
-
-        shares[receiver] += sharesOut;
-        totalShares += sharesOut;
-
-        emit Deposit(msg.sender, receiver, assets, sharesOut);
-    }
-
-    /**
-     * @notice Withdraw assets by burning shares
-     * @param assets Amount of underlying to withdraw
-     * @param receiver Address to receive assets
-     * @param owner Owner of the shares
-     * @return sharesIn Amount of shares burned
-     */
-    function withdrawAssets(
-        uint256 assets,
-        address receiver,
-        address owner
-    ) external returns (uint256 sharesIn) {
-        sharesIn = convertToShares(assets);
-
-        if (shares[owner] < sharesIn) revert InsufficientShares();
-
-        shares[owner] -= sharesIn;
-        totalShares -= sharesIn;
-
-        // TODO: Transfer assets to receiver
-        // IERC20(asset).transfer(receiver, assets);
-
-        emit Withdraw(msg.sender, receiver, owner, assets, sharesIn);
-
-        // Silence unused warning
-        receiver;
-    }
-
-    /**
-     * @notice Redeem shares for underlying
-     * @param sharesToRedeem Amount of shares to redeem
-     * @param receiver Address to receive assets
-     * @param owner Owner of the shares
-     * @return assets Amount of underlying received
-     */
-    function redeem(
-        uint256 sharesToRedeem,
-        address receiver,
-        address owner
-    ) external returns (uint256 assets) {
-        if (shares[owner] < sharesToRedeem) revert InsufficientShares();
-
-        assets = convertToAssets(sharesToRedeem);
-
-        shares[owner] -= sharesToRedeem;
-        totalShares -= sharesToRedeem;
-
-        // TODO: Transfer assets to receiver
-        // IERC20(asset).transfer(receiver, assets);
-
-        emit Withdraw(msg.sender, receiver, owner, assets, sharesToRedeem);
-    }
-
-    // ============ View Functions ============
-
-    /**
-     * @notice Convert assets to shares
-     * @param assets Amount of underlying
-     * @return Amount of shares
-     */
-    function convertToShares(uint256 assets) public view returns (uint256) {
-        return (assets * 1e18) / sharePrice;
-    }
-
-    /**
-     * @notice Convert shares to assets
-     * @param _shares Amount of shares
-     * @return Amount of underlying
-     */
-    function convertToAssets(uint256 _shares) public view returns (uint256) {
-        return (_shares * sharePrice) / 1e18;
-    }
-
-    /**
-     * @notice Get total assets held by the vault
-     * @return Total underlying assets
-     */
-    function totalAssets() external view returns (uint256) {
-        return convertToAssets(totalShares);
-    }
-
-    // ============ Mock Functions (for testing) ============
-
-    /**
-     * @notice Simulate yield accrual by increasing share price
-     * @param newSharePrice New share price (scaled by 1e18)
-     */
-    function accrueYield(uint256 newSharePrice) external {
-        sharePrice = newSharePrice;
-        emit YieldAccrued(newSharePrice);
-    }
-
-    /**
-     * @notice Simulate yield accrual by percentage
-     * @param basisPoints Yield in basis points (100 = 1%)
-     */
-    function accrueYieldBps(uint256 basisPoints) external {
-        sharePrice = sharePrice + (sharePrice * basisPoints) / 10000;
-        emit YieldAccrued(sharePrice);
+    constructor(address assetToken) {
+        _asset = IERC20(assetToken);
     }
 
     // ============ IYieldAdapter Implementation ============
@@ -183,66 +62,129 @@ contract MockYieldVault is IYieldAdapter {
     /**
      * @inheritdoc IYieldAdapter
      */
-    function deposit(address token, uint256 amount) external override returns (uint256) {
-        if (token != asset) revert TransferFailed();
-        // In a real implementation, would transfer and deposit
-        uint256 sharesOut = convertToShares(amount);
+    function deposit(uint256 amount) external override returns (uint256 sharesOut) {
+        if (amount == 0) return 0;
+
+        // Calculate shares to mint
+        sharesOut = _convertToShares(amount);
+
+        // Transfer tokens from caller to vault
+        _asset.safeTransferFrom(msg.sender, address(this), amount);
+
+        // Mint shares to caller
         shares[msg.sender] += sharesOut;
         totalShares += sharesOut;
-        emit Deposit(msg.sender, msg.sender, amount, sharesOut);
-        return sharesOut;
+
+        emit Deposit(msg.sender, amount, sharesOut);
     }
 
     /**
      * @inheritdoc IYieldAdapter
      */
-    function withdraw(address token, uint256 amount) external override returns (uint256) {
-        if (token != asset) revert TransferFailed();
-        uint256 sharesIn = convertToShares(amount);
-        if (shares[msg.sender] < sharesIn) revert InsufficientShares();
-        shares[msg.sender] -= sharesIn;
-        totalShares -= sharesIn;
-        emit Withdraw(msg.sender, msg.sender, msg.sender, amount, sharesIn);
-        return amount;
+    function withdraw(uint256 amount) external override returns (uint256 actualAmount) {
+        if (amount == 0) return 0;
+
+        // Calculate shares to burn
+        uint256 sharesToBurn = _convertToShares(amount);
+
+        if (shares[msg.sender] < sharesToBurn) revert InsufficientShares();
+
+        // Check vault has enough balance
+        uint256 vaultBalance = _asset.balanceOf(address(this));
+        actualAmount = amount > vaultBalance ? vaultBalance : amount;
+
+        // Recalculate shares if we're withdrawing less
+        if (actualAmount < amount) {
+            sharesToBurn = _convertToShares(actualAmount);
+        }
+
+        // Burn shares
+        shares[msg.sender] -= sharesToBurn;
+        totalShares -= sharesToBurn;
+
+        // Transfer tokens to caller
+        _asset.safeTransfer(msg.sender, actualAmount);
+
+        emit Withdraw(msg.sender, actualAmount, sharesToBurn);
     }
 
     /**
      * @inheritdoc IYieldAdapter
      */
-    function totalValue(address token, address account) external view override returns (uint256) {
-        if (token != asset) return 0;
-        return convertToAssets(shares[account]);
+    function totalValue() external view override returns (uint256) {
+        return _convertToAssets(shares[msg.sender]);
     }
 
     /**
      * @inheritdoc IYieldAdapter
      */
-    function shareBalance(address token, address account) external view override returns (uint256) {
-        if (token != asset) return 0;
+    function asset() external view override returns (address) {
+        return address(_asset);
+    }
+
+    /**
+     * @inheritdoc IYieldAdapter
+     */
+    function vault() external view override returns (address) {
+        return address(this);
+    }
+
+    // ============ View Functions ============
+
+    /**
+     * @notice Get total value for any account
+     * @param account Account to check
+     * @return Total value in underlying tokens
+     */
+    function totalValueOf(address account) external view returns (uint256) {
+        return _convertToAssets(shares[account]);
+    }
+
+    /**
+     * @notice Get share balance for any account
+     * @param account Account to check
+     * @return Share balance
+     */
+    function sharesOf(address account) external view returns (uint256) {
         return shares[account];
     }
 
     /**
-     * @inheritdoc IYieldAdapter
+     * @notice Total assets held by vault
      */
-    function sharesToUnderlying(address token, uint256 _shares) external view override returns (uint256) {
-        if (token != asset) return 0;
-        return convertToAssets(_shares);
+    function totalAssets() external view returns (uint256) {
+        return _asset.balanceOf(address(this));
+    }
+
+    // ============ Mock Functions (for testing/demos) ============
+
+    /**
+     * @notice Simulate yield by increasing share price
+     * @param newSharePrice New price (1e18 = 1:1, 1.05e18 = 5% yield)
+     */
+    function accrueYield(uint256 newSharePrice) external {
+        uint256 oldPrice = sharePrice;
+        sharePrice = newSharePrice;
+        emit YieldAccrued(oldPrice, newSharePrice);
     }
 
     /**
-     * @inheritdoc IYieldAdapter
+     * @notice Simulate yield by basis points
+     * @param bps Basis points to add (100 = 1%)
      */
-    function underlyingToShares(address token, uint256 amount) external view override returns (uint256) {
-        if (token != asset) return 0;
-        return convertToShares(amount);
+    function accrueYieldBps(uint256 bps) external {
+        uint256 oldPrice = sharePrice;
+        sharePrice = sharePrice + (sharePrice * bps) / 10000;
+        emit YieldAccrued(oldPrice, sharePrice);
     }
 
-    /**
-     * @inheritdoc IYieldAdapter
-     */
-    function getVault(address token) external view override returns (address) {
-        if (token != asset) return address(0);
-        return address(this);
+    // ============ Internal Functions ============
+
+    function _convertToShares(uint256 assets) internal view returns (uint256) {
+        return (assets * 1e18) / sharePrice;
+    }
+
+    function _convertToAssets(uint256 _shares) internal view returns (uint256) {
+        return (_shares * sharePrice) / 1e18;
     }
 }
