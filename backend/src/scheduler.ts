@@ -6,6 +6,10 @@
  *
  * NOTE: Tasks are stored in-memory and will reset on server restart.
  * TODO: Persist tasks to database or config file for production use.
+ *
+ * B6 UPDATE: Now integrated with bundler.ts to submit real UserOperations
+ * via CDP bundler. Requires CDP_BUNDLER_URL, AUTOMATION_PRIVATE_KEY, and
+ * AUTO_YIELD_MODULE_ADDRESS to be configured in .env.
  */
 
 import {
@@ -19,6 +23,13 @@ import {
   DataSource,
 } from "./types";
 import { getExecutableRecommendedStrategies, DEFAULTS } from "./strategyService";
+import {
+  submitRebalanceUserOp,
+  submitMigrateStrategyUserOp,
+  submitSweepDustUserOp,
+  USDC_ADDRESS,
+} from "./bundler";
+import type { Address } from "viem";
 
 // ============================================================================
 // Configuration
@@ -32,6 +43,18 @@ const DEFAULT_TASK_INTERVAL_MS = 5 * 60 * 1000;
 
 /** Maximum consecutive errors before disabling a task */
 const MAX_ERROR_COUNT = 5;
+
+/** Check if bundler is properly configured */
+function isBundlerConfigured(): boolean {
+  return !!(
+    process.env.CDP_BUNDLER_URL &&
+    process.env.AUTOMATION_PRIVATE_KEY &&
+    process.env.AUTO_YIELD_MODULE_ADDRESS
+  );
+}
+
+/** Whether to actually submit UserOps (vs simulation mode) */
+let bundlerEnabled = false;
 
 // ============================================================================
 // In-memory storage
@@ -280,14 +303,63 @@ export async function executeTask(
       );
     }
 
-    // Simulate the action
-    // TODO (B5): Replace with actual bundler integration
-    // const userOp = await composeBundlerUserOp(task.wallet, task.action, strategyId);
-    // const userOpHash = await submitUserOp(userOp);
-
     const actionMessage = getActionMessage(task.action, task.wallet, strategyId);
     log(logSource, `  ${actionMessage}`);
-    log(logSource, `  [SIMULATED] Would submit userOp for ${task.action} here`);
+
+    // Execute via bundler if configured, otherwise simulate
+    let userOpHash: string | undefined;
+    let adapterUsed: string | undefined;
+
+    if (bundlerEnabled) {
+      // Get adapter address for migrateStrategy action
+      let adapterAddress: Address | undefined;
+      if (task.action === "rebalance" || task.action === "flushToChecking") {
+        // rebalance and flushToChecking use the best strategy's adapter
+        const result = await getExecutableRecommendedStrategies(
+          task.token,
+          task.chainId,
+          task.riskTolerance,
+          0
+        );
+        if (result.bestStrategy?.adapterAddress) {
+          adapterAddress = result.bestStrategy.adapterAddress as Address;
+        }
+      }
+
+      log(logSource, `  Submitting UserOp to CDP bundler...`);
+
+      switch (task.action) {
+        case "rebalance":
+          userOpHash = await submitRebalanceUserOp(
+            task.wallet as Address,
+            USDC_ADDRESS
+          );
+          break;
+
+        case "flushToChecking":
+          // flushToChecking uses rebalance with different intent
+          // For now, treat as rebalance (module handles the logic)
+          userOpHash = await submitRebalanceUserOp(
+            task.wallet as Address,
+            USDC_ADDRESS
+          );
+          break;
+
+        case "sweepDust":
+          userOpHash = await submitSweepDustUserOp(task.wallet as Address);
+          break;
+
+        default:
+          throw new Error(`Unknown action: ${task.action}`);
+      }
+
+      adapterUsed = adapterAddress;
+      log(logSource, `  UserOp submitted: ${userOpHash}`);
+    } else {
+      // Simulation mode - bundler not configured
+      log(logSource, `  [SIMULATION] Bundler not configured, skipping real submission`);
+      userOpHash = `0xsimulated_${Date.now().toString(16)}`;
+    }
 
     // Update task status
     task.status = "completed";
@@ -301,8 +373,10 @@ export async function executeTask(
       success: true,
       strategyUsed: strategyId,
       strategyScore,
+      adapterUsed,
       message: actionMessage,
       timestamp: startTime,
+      userOpHash,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -393,6 +467,28 @@ export function startScheduler(intervalMs?: number): void {
   tickIntervalMs = intervalMs || DEFAULT_TICK_INTERVAL_MS;
   isRunning = true;
 
+  // Check bundler configuration
+  bundlerEnabled = isBundlerConfigured();
+
+  if (bundlerEnabled) {
+    log("start", `Bundler ENABLED - will submit real UserOperations to CDP`);
+    log("start", `  CDP_BUNDLER_URL: configured`);
+    log("start", `  AUTOMATION_PRIVATE_KEY: configured`);
+    log("start", `  AUTO_YIELD_MODULE_ADDRESS: ${process.env.AUTO_YIELD_MODULE_ADDRESS}`);
+  } else {
+    log("start", `WARNING: Bundler NOT configured - running in SIMULATION mode`);
+    if (!process.env.CDP_BUNDLER_URL) {
+      log("start", `  Missing: CDP_BUNDLER_URL`);
+    }
+    if (!process.env.AUTOMATION_PRIVATE_KEY) {
+      log("start", `  Missing: AUTOMATION_PRIVATE_KEY (run: npm run generate-session-key)`);
+    }
+    if (!process.env.AUTO_YIELD_MODULE_ADDRESS) {
+      log("start", `  Missing: AUTO_YIELD_MODULE_ADDRESS (get from Jackson)`);
+    }
+    log("start", `  Tasks will be logged but no UserOps will be submitted`);
+  }
+
   log("start", `Scheduler started (tick interval: ${tickIntervalMs / 1000}s)`);
 
   // Run first tick immediately
@@ -428,6 +524,7 @@ export function stopScheduler(): void {
 export function getSchedulerStatus(): SchedulerStatus {
   return {
     isRunning,
+    bundlerEnabled,
     tickIntervalMs,
     taskCount: tasks.size,
     lastTickAt,
@@ -436,28 +533,8 @@ export function getSchedulerStatus(): SchedulerStatus {
 }
 
 // ============================================================================
-// TODO: Future bundler integration (B5)
+// Future improvements
 // ============================================================================
-
-// TODO (B5): Implement bundler integration
-// async function composeBundlerUserOp(
-//   wallet: string,
-//   action: TaskAction,
-//   strategyId: string
-// ): Promise<UserOperation> {
-//   // Compose the userOp calldata based on action type
-//   // For rebalance: call AutoYieldModule.rebalance()
-//   // For flushToChecking: call AutoYieldModule.flushToChecking(token)
-//   // For sweepDust: call AutoYieldModule.sweepDustAndCompound()
-//   throw new Error("Not implemented");
-// }
-
-// TODO (B5): Submit userOp to bundler
-// async function submitUserOp(userOp: UserOperation): Promise<string> {
-//   // Send to Pimlico or other bundler
-//   // Return userOpHash
-//   throw new Error("Not implemented");
-// }
 
 // TODO: Persist tasks to database
 // async function persistTasks(): Promise<void> {

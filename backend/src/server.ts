@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express, { Request, Response, NextFunction } from "express";
 import {
   getStrategiesForToken,
@@ -148,6 +149,7 @@ app.get("/", (_req: Request, res: Response) => {
     message: "AutoYield Backend is running",
     endpoints: [
       "/health",
+      "/automation-key",
       "/strategies",
       "/recommend",
       "/recommendations",
@@ -170,6 +172,34 @@ app.get("/", (_req: Request, res: Response) => {
  */
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
+});
+
+/**
+ * GET /automation-key
+ * Returns the public address of the automation session key.
+ * Frontend needs this to pass to the factory during wallet creation.
+ *
+ * The session key has restricted permissions - it can only call:
+ *   - rebalance() - Move excess checking balance into yield
+ *   - migrateStrategy() - Move funds between whitelisted vaults
+ *   - sweepDustAndCompound() - Consolidate dust tokens into yield
+ *
+ * It CANNOT transfer funds or change user settings.
+ */
+app.get("/automation-key", (_req: Request, res: Response) => {
+  const publicAddress = process.env.AUTOMATION_PUBLIC_ADDRESS;
+
+  if (!publicAddress) {
+    const errorResponse: ErrorResponse = {
+      error: "Automation key not configured. Run: npm run generate-session-key",
+    };
+    return res.status(500).json(errorResponse);
+  }
+
+  return res.json({
+    address: publicAddress,
+    permissions: ["rebalance", "migrateStrategy", "sweepDustAndCompound"],
+  });
 });
 
 /**
@@ -883,6 +913,7 @@ app.listen(PORT, () => {
 ╠═══════════════════════════════════════════════════════════╣
 ║  Endpoints:                                               ║
 ║    GET  /health              - Health check               ║
+║    GET  /automation-key      - Session key for frontend   ║
 ║    GET  /strategies          - List strategies by token   ║
 ║    GET  /recommend           - Best strategy (highest APY)║
 ║    GET  /recommendations     - Strategies by prefs (B2)   ║

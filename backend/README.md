@@ -13,9 +13,41 @@ This backend implements the Bryce tickets from the PRD in sequence. Each feature
 - Added scored strategy types plus helpers to parse/validate query params.
 
 ### Ticket B3 – Auto-rebalance scheduler
-- Added `scheduler.ts` to register periodic tasks that simulate rebalance userOps.
+- Added `scheduler.ts` to register periodic tasks for automation actions.
 - New endpoints under `/rebalance-tasks` allow listing, creating, deleting, and manually running tasks.
-- Scheduler uses the recommendation service to pick strategies per task, logs simulated runs, and keeps in-memory status (future tickets will swap in bundler calls + persistence).
+- Scheduler uses the recommendation service to pick Morpho-only strategies per task.
+- **Now integrated with bundler (Task 6)** - submits real UserOperations when configured.
+
+### Ticket B6 – Scheduler Bundler Integration
+
+The scheduler now submits real automation UserOperations via CDP bundler when properly configured.
+
+**Modes:**
+- **Bundler ENABLED**: When all env vars are set, tasks submit real UserOps to CDP
+- **Simulation mode**: When bundler is not configured, tasks log but don't submit
+
+**Supported actions:**
+- `rebalance` - Calls `submitRebalanceUserOp()` to move excess checking into yield
+- `flushToChecking` - Also uses rebalance (module handles logic internally)
+- `sweepDust` - Calls `submitSweepDustUserOp()` to consolidate dust tokens
+
+**Required environment variables:**
+```env
+CDP_BUNDLER_URL=https://api.developer.coinbase.com/rpc/v1/base/YOUR_KEY
+AUTOMATION_PRIVATE_KEY=0x...
+AUTO_YIELD_MODULE_ADDRESS=0x...
+```
+
+**Checking scheduler status:**
+```bash
+curl http://localhost:3001/
+# Response includes: { "scheduler": { "isRunning": true, "bundlerEnabled": true, ... } }
+```
+
+**Disabling the scheduler:**
+To run without submitting UserOps, simply omit one of the required env vars. The scheduler will start in simulation mode and log: `WARNING: Bundler NOT configured - running in SIMULATION mode`.
+
+Alternatively, don't call any `/rebalance-tasks` endpoints - the scheduler only executes tasks that are registered.
 
 ### Ticket B4 – Dust token metadata service
 - Added `dustConfig.ts` with a registry of known tokens on Base (USDC, WETH, meme coins, airdrops).
@@ -29,6 +61,79 @@ This backend implements the Bryce tickets from the PRD in sequence. Each feature
   - Dust sources (DEGEN, AERO, etc.) - airdrop/meme tokens to sweep FROM
   - Ignored tokens (known scams)
 - TODO hooks for real on-chain balance reading and DEX metadata (B5+).
+
+### Automation Session Key Endpoint
+
+The `/automation-key` endpoint returns the public address of the backend's session key. The frontend needs this during wallet creation to register it with the factory.
+
+**Endpoint:** `GET /automation-key`
+
+**Response:**
+```json
+{
+  "address": "0x...",
+  "permissions": ["rebalance", "migrateStrategy", "sweepDustAndCompound"]
+}
+```
+
+**Why the frontend needs this:**
+When creating a new Autopilot wallet, the factory must know which session key to authorize for automation. The frontend fetches this address from the backend and passes it to the factory contract during wallet deployment.
+
+**Setup:**
+1. Run `npm run generate-session-key` to create the keypair
+2. Add `AUTOMATION_PUBLIC_ADDRESS` to `.env`
+3. The endpoint will return 500 if the env var is not set
+
+### Bundler Integration (Task 5)
+
+The `bundler.ts` service builds and submits UserOperations for automation tasks using the ZeroDev SDK with CDP Bundler/Paymaster.
+
+**Exported functions:**
+
+```typescript
+import {
+  submitRebalanceUserOp,
+  submitMigrateStrategyUserOp,
+  submitSweepDustUserOp,
+} from "./bundler";
+
+// Move excess checking balance into yield
+await submitRebalanceUserOp(walletAddress, tokenAddress?);
+
+// Migrate funds to a better vault
+await submitMigrateStrategyUserOp(walletAddress, tokenAddress, newAdapterAddress);
+
+// Sweep dust tokens and compound into yield
+await submitSweepDustUserOp(walletAddress);
+```
+
+**Required environment variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `CDP_BUNDLER_URL` | CDP bundler endpoint (get from https://portal.cdp.coinbase.com) |
+| `AUTOMATION_PRIVATE_KEY` | Session key for signing (run `npm run generate-session-key`) |
+| `AUTO_YIELD_MODULE_ADDRESS` | AutoYieldModule contract address (Jackson provides) |
+
+**How it works:**
+
+1. Each function encodes a call to AutoYieldModule (rebalance, migrateStrategy, or sweepDustAndCompound)
+2. Creates a Kernel account client using the automation session key
+3. Submits the UserOp to CDP bundler (which also handles gas sponsorship)
+4. Waits for transaction confirmation and returns the UserOp hash
+
+**TODO (Session Key Signing):**
+
+The current implementation uses standard ECDSA validation. This needs to be updated once Jackson confirms how Kernel validates session keys. The session key should be restricted to only call:
+- `rebalance(address token)`
+- `migrateStrategy(address token, address newAdapter)`
+- `sweepDustAndCompound()`
+
+**Dependencies:**
+
+```bash
+npm install @zerodev/sdk @zerodev/ecdsa-validator viem
+```
 
 ### Live Strategy Cache
 
