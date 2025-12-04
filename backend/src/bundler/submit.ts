@@ -32,7 +32,6 @@ async function submitAutomationUserOp(
   const signer = getAutomationSigner();
   console.log(`[bundler] Signer: ${signer.address}, Wallet: ${walletAddress}`);
 
-  // ERC-7579 execution calldata: abi.encodePacked(target, value, callData)
   const executionCalldata = concat([
     CONTRACTS.MODULE,
     pad(toHex(0n), { size: 32 }),
@@ -45,13 +44,12 @@ async function submitAutomationUserOp(
     args: [EXEC_MODE_DEFAULT, executionCalldata],
   });
 
-  // getNonce returns the full encoded nonce from EntryPoint (includes validator in key)
   const nonce = await getNonce(walletAddress);
-
   const { maxFeePerGas, maxPriorityFeePerGas } = await getGasPrices();
   const gasFees = packUint128(maxPriorityFeePerGas, maxFeePerGas);
 
   const stubGasLimits = packUint128(500000n, 500000n);
+  const stubPreVerificationGas = 100000n;
 
   const stubPaymasterAndData = await getPaymasterStubData({
     sender: walletAddress,
@@ -59,23 +57,26 @@ async function submitAutomationUserOp(
     initCode: "0x",
     callData,
     accountGasLimits: stubGasLimits,
-    preVerificationGas: 100000n,
+    preVerificationGas: stubPreVerificationGas,
     maxFeePerGas,
     maxPriorityFeePerGas,
   });
 
-  const dummySignature = ("0x" + "00".repeat(65)) as Hex;
   const stubUserOp: PackedUserOperation = {
     sender: walletAddress,
     nonce,
     initCode: "0x",
     callData,
     accountGasLimits: stubGasLimits,
-    preVerificationGas: 100000n,
+    preVerificationGas: stubPreVerificationGas,
     gasFees,
     paymasterAndData: stubPaymasterAndData,
-    signature: dummySignature,
+    signature: "0x",
   };
+
+  const stubHash = getUserOpHash(stubUserOp);
+  const stubSignature = await signer.signMessage({ message: { raw: stubHash } });
+  stubUserOp.signature = stubSignature;
 
   const gasEstimate = await estimateUserOperationGas(stubUserOp);
 
@@ -108,9 +109,9 @@ async function submitAutomationUserOp(
     signature: "0x",
   };
 
-  const userOpHash = getUserOpHash(finalUserOp);
-  const signature = await signer.signMessage({ message: { raw: userOpHash } });
-  finalUserOp.signature = signature;
+  const finalHash = getUserOpHash(finalUserOp);
+  const finalSignature = await signer.signMessage({ message: { raw: finalHash } });
+  finalUserOp.signature = finalSignature;
 
   const submittedHash = await sendUserOperation(finalUserOp);
   console.log(`[bundler] Submitted: ${submittedHash}`);
