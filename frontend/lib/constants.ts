@@ -1,18 +1,22 @@
 import { type Address } from "viem";
 
-// Deployed contract addresses on Base Mainnet
+// Deployed contract addresses on Base Mainnet (v2 - December 4, 2024)
 export const CONTRACTS = {
   // AutopilotFactory - deploys smart wallets with AutoYieldModule pre-installed
   FACTORY: (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ||
-    "0x5646fdb8a79bdfac5f50889c6c5ebddb2aaf7ef9") as Address,
+    "0xcf10279BAA0d5407Dbb637517d23055A55E72923") as Address,
 
   // AutoYieldModule - manages yield allocation for smart wallets
   MODULE: (process.env.NEXT_PUBLIC_MODULE_ADDRESS ||
-    "0xdC5ec0628ff1c0063A2d2B13B3FbBD9431aE4a10") as Address,
+    "0x71b5A4663A49FF02BE672Ea9560256D2268727B7") as Address,
+
+  // AutomationValidator - ERC-7579 validator for automation key signatures
+  VALIDATOR: (process.env.NEXT_PUBLIC_VALIDATOR_ADDRESS ||
+    "0xe29ed376a2780f653C14EEC203eD25094c0E772A") as Address,
 
   // MorphoAdapter - default yield adapter
   ADAPTER: (process.env.NEXT_PUBLIC_ADAPTER_ADDRESS ||
-    "0x33fD350a1ecE1239B880B3b3f91eb39407A7eDf9") as Address,
+    "0x42EFecD83447e5b90c5F706309FaC8f9615bd68F") as Address,
 
   // USDC on Base Mainnet
   USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
