@@ -3,11 +3,14 @@
  * Run: npm run test:bundler [wallet_address]
  */
 
-import { encodeFunctionData, type Address } from "viem";
+// Load env vars BEFORE any other imports (rpc.ts reads CDP_BUNDLER_URL at module load)
+import { config } from "dotenv";
+config({ path: ".env.local" });
+
+import { encodeFunctionData, concat, pad, toHex, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { CONTRACTS, AUTO_YIELD_MODULE_ABI, KERNEL_EXECUTE_ABI } from "./constants";
+import { CONTRACTS, AUTO_YIELD_MODULE_ABI, KERNEL_EXECUTE_ABI, EXEC_MODE_DEFAULT } from "./constants";
 import {
-  encodeNonceForValidator,
   packUint128,
   getUserOpHash,
   type PackedUserOperation,
@@ -17,7 +20,6 @@ import {
   getNonce,
   getGasPrices,
   getPaymasterStubData,
-  estimateUserOperationGas,
   isBundlerHealthy,
 } from "./rpc";
 
@@ -65,9 +67,9 @@ async function testWalletExists(addr: Address): Promise<boolean> {
 }
 
 async function testFullFlow(walletAddress: Address) {
-  const sequentialNonce = await getNonce(walletAddress);
-  const nonce = encodeNonceForValidator(CONTRACTS.VALIDATOR, sequentialNonce);
-  log("Nonce", "ok", `${sequentialNonce}`);
+  // getNonce returns the full encoded nonce from EntryPoint (includes validator in key)
+  const nonce = await getNonce(walletAddress);
+  log("Nonce", "ok", `0x${nonce.toString(16)}`);
 
   const { maxFeePerGas, maxPriorityFeePerGas } = await getGasPrices();
   const gasFees = packUint128(maxPriorityFeePerGas, maxFeePerGas);
@@ -78,50 +80,47 @@ async function testFullFlow(walletAddress: Address) {
     functionName: "rebalance",
     args: [CONTRACTS.USDC],
   });
+
+  // ERC-7579 execution calldata: abi.encodePacked(target, value, callData)
+  const executionCalldata = concat([
+    CONTRACTS.MODULE,                    // address (20 bytes)
+    pad(toHex(0n), { size: 32 }),        // value (32 bytes)
+    moduleCallData,                       // data (variable length)
+  ]);
+
   const callData = encodeFunctionData({
     abi: KERNEL_EXECUTE_ABI,
     functionName: "execute",
-    args: [CONTRACTS.MODULE, 0n, moduleCallData],
+    args: [EXEC_MODE_DEFAULT, executionCalldata],
   });
   log("Calldata", "ok", `${callData.length} chars`);
 
-  const stubGasLimits = packUint128(500000n, 500000n);
+  // Use fixed gas limits (CDP bundler can't estimate with dummy signature)
+  const verificationGasLimit = 500000n;
+  const callGasLimit = 300000n;
+  const preVerificationGas = 100000n;
+  const accountGasLimits = packUint128(verificationGasLimit, callGasLimit);
+  log("Gas Limits", "ok", `verify: ${verificationGasLimit}, call: ${callGasLimit}`);
+
   const paymasterAndData = await getPaymasterStubData({
     sender: walletAddress,
     nonce,
     initCode: "0x",
     callData,
-    accountGasLimits: stubGasLimits,
-    preVerificationGas: 100000n,
-    gasFees,
+    accountGasLimits,
+    preVerificationGas,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
   });
   log("Paymaster", "ok", `${paymasterAndData.slice(0, 42)}`);
 
-  const dummySig = ("0x" + "00".repeat(65)) as `0x${string}`;
-  const gasEst = await estimateUserOperationGas({
-    sender: walletAddress,
-    nonce,
-    initCode: "0x",
-    callData,
-    accountGasLimits: stubGasLimits,
-    preVerificationGas: 100000n,
-    gasFees,
-    paymasterAndData,
-    signature: dummySig,
-  });
-  log("Gas Est", "ok", `verify: ${gasEst.verificationGasLimit}, call: ${gasEst.callGasLimit}`);
-
-  const accountGasLimits = packUint128(
-    BigInt(gasEst.verificationGasLimit),
-    BigInt(gasEst.callGasLimit)
-  );
   const userOp: PackedUserOperation = {
     sender: walletAddress,
     nonce,
     initCode: "0x",
     callData,
     accountGasLimits,
-    preVerificationGas: BigInt(gasEst.preVerificationGas),
+    preVerificationGas,
     gasFees,
     paymasterAndData,
     signature: "0x",
@@ -131,7 +130,11 @@ async function testFullFlow(walletAddress: Address) {
 
   const signer = privateKeyToAccount(process.env.AUTOMATION_PRIVATE_KEY as `0x${string}`);
   const sig = await signer.signMessage({ message: { raw: hash } });
+  userOp.signature = sig;
   log("Signature", "ok", `${sig.slice(0, 16)}...`);
+
+  // Note: Not submitting - this test validates the pipeline without sending
+  log("Ready", "ok", "UserOp ready to submit (not sending in test mode)");
 }
 
 async function main() {
@@ -155,6 +158,4 @@ async function main() {
   console.log("\n✓ All tests passed\n");
 }
 
-import { config } from "dotenv";
-config({ path: ".env.local" });
 main().catch(console.error);

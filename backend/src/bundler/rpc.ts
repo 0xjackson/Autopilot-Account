@@ -37,6 +37,17 @@ export interface UserOpReceipt {
   success: boolean;
 }
 
+export interface PaymasterStubInput {
+  sender: Address;
+  nonce: bigint;
+  initCode: Hex;
+  callData: Hex;
+  accountGasLimits: Hex;
+  preVerificationGas: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+}
+
 async function bundlerRpc<T>(method: string, params: unknown[]): Promise<T> {
   if (!CDP_BUNDLER_URL) {
     throw new Error("CDP_BUNDLER_URL not configured");
@@ -97,42 +108,58 @@ export async function estimateUserOperationGas(
 }
 
 export async function getPaymasterStubData(
-  userOp: Partial<PackedUserOperation>
+  input: PaymasterStubInput
 ): Promise<Hex> {
-  const result = await bundlerRpc<PaymasterResult>("pm_getPaymasterStubData", [
+  const result = await bundlerRpc<Record<string, unknown>>("pm_getPaymasterStubData", [
     {
-      sender: userOp.sender,
-      nonce: toHex(userOp.nonce!),
-      initCode: userOp.initCode,
-      callData: userOp.callData,
-      accountGasLimits: userOp.accountGasLimits,
-      preVerificationGas: toHex(userOp.preVerificationGas!),
-      gasFees: userOp.gasFees,
+      sender: input.sender,
+      nonce: toHex(input.nonce),
+      initCode: input.initCode,
+      callData: input.callData,
+      accountGasLimits: input.accountGasLimits,
+      preVerificationGas: toHex(input.preVerificationGas),
+      maxFeePerGas: toHex(input.maxFeePerGas),
+      maxPriorityFeePerGas: toHex(input.maxPriorityFeePerGas),
     },
     CONTRACTS.ENTRYPOINT,
     CHAIN_ID_HEX,
   ]);
 
+  // Handle both ERC-7677 response formats
+  const paymasterAndData = result.paymasterAndData as Hex | undefined;
+
+  // If we get paymasterAndData directly, return it
+  if (paymasterAndData) {
+    return paymasterAndData;
+  }
+
+  const paymaster = result.paymaster as Address;
+  // Use default gas limits if not provided (100k each)
+  const paymasterVerificationGasLimit = (result.paymasterVerificationGasLimit as Hex) || "0x186a0";
+  const paymasterPostOpGasLimit = (result.paymasterPostOpGasLimit as Hex) || "0x186a0";
+  const paymasterData = (result.paymasterData || "0x") as Hex;
+
   return buildPaymasterAndData(
-    result.paymaster,
-    BigInt(result.paymasterVerificationGasLimit),
-    BigInt(result.paymasterPostOpGasLimit),
-    result.paymasterData
+    paymaster,
+    BigInt(paymasterVerificationGasLimit),
+    BigInt(paymasterPostOpGasLimit),
+    paymasterData
   );
 }
 
 export async function getPaymasterData(
-  userOp: Omit<PackedUserOperation, "signature" | "paymasterAndData">
+  input: PaymasterStubInput
 ): Promise<Hex> {
   const result = await bundlerRpc<PaymasterResult>("pm_getPaymasterData", [
     {
-      sender: userOp.sender,
-      nonce: toHex(userOp.nonce),
-      initCode: userOp.initCode,
-      callData: userOp.callData,
-      accountGasLimits: userOp.accountGasLimits,
-      preVerificationGas: toHex(userOp.preVerificationGas),
-      gasFees: userOp.gasFees,
+      sender: input.sender,
+      nonce: toHex(input.nonce),
+      initCode: input.initCode,
+      callData: input.callData,
+      accountGasLimits: input.accountGasLimits,
+      preVerificationGas: toHex(input.preVerificationGas),
+      maxFeePerGas: toHex(input.maxFeePerGas),
+      maxPriorityFeePerGas: toHex(input.maxPriorityFeePerGas),
     },
     CONTRACTS.ENTRYPOINT,
     CHAIN_ID_HEX,

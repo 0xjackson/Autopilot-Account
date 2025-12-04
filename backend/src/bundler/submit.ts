@@ -1,9 +1,8 @@
-import { encodeFunctionData, type Hex, type Address } from "viem";
+import { encodeFunctionData, concat, pad, toHex, type Hex, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { CONTRACTS, AUTO_YIELD_MODULE_ABI, KERNEL_EXECUTE_ABI } from "./constants";
+import { CONTRACTS, AUTO_YIELD_MODULE_ABI, KERNEL_EXECUTE_ABI, EXEC_MODE_DEFAULT } from "./constants";
 import {
   type PackedUserOperation,
-  encodeNonceForValidator,
   packUint128,
   getUserOpHash,
 } from "./userOp";
@@ -33,20 +32,40 @@ async function submitAutomationUserOp(
   const signer = getAutomationSigner();
   console.log(`[bundler] Signer: ${signer.address}, Wallet: ${walletAddress}`);
 
+  // ERC-7579 execution calldata: abi.encodePacked(target, value, callData)
+  const executionCalldata = concat([
+    CONTRACTS.MODULE,
+    pad(toHex(0n), { size: 32 }),
+    moduleCallData,
+  ]);
+
   const callData = encodeFunctionData({
     abi: KERNEL_EXECUTE_ABI,
     functionName: "execute",
-    args: [CONTRACTS.MODULE, 0n, moduleCallData],
+    args: [EXEC_MODE_DEFAULT, executionCalldata],
   });
 
-  const sequentialNonce = await getNonce(walletAddress);
-  const nonce = encodeNonceForValidator(CONTRACTS.VALIDATOR, sequentialNonce);
+  // getNonce returns the full encoded nonce from EntryPoint (includes validator in key)
+  const nonce = await getNonce(walletAddress);
 
   const { maxFeePerGas, maxPriorityFeePerGas } = await getGasPrices();
   const gasFees = packUint128(maxPriorityFeePerGas, maxFeePerGas);
 
   const stubGasLimits = packUint128(500000n, 500000n);
-  const stubUserOp: Partial<PackedUserOperation> = {
+
+  const stubPaymasterAndData = await getPaymasterStubData({
+    sender: walletAddress,
+    nonce,
+    initCode: "0x",
+    callData,
+    accountGasLimits: stubGasLimits,
+    preVerificationGas: 100000n,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+  });
+
+  const dummySignature = ("0x" + "00".repeat(65)) as Hex;
+  const stubUserOp: PackedUserOperation = {
     sender: walletAddress,
     nonce,
     initCode: "0x",
@@ -54,16 +73,11 @@ async function submitAutomationUserOp(
     accountGasLimits: stubGasLimits,
     preVerificationGas: 100000n,
     gasFees,
-  };
-
-  const stubPaymasterAndData = await getPaymasterStubData(stubUserOp);
-
-  const dummySignature = ("0x" + "00".repeat(65)) as Hex;
-  const gasEstimate = await estimateUserOperationGas({
-    ...stubUserOp,
     paymasterAndData: stubPaymasterAndData,
     signature: dummySignature,
-  } as PackedUserOperation);
+  };
+
+  const gasEstimate = await estimateUserOperationGas(stubUserOp);
 
   const accountGasLimits = packUint128(
     BigInt(gasEstimate.verificationGasLimit),
@@ -78,7 +92,8 @@ async function submitAutomationUserOp(
     callData,
     accountGasLimits,
     preVerificationGas,
-    gasFees,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
   });
 
   const finalUserOp: PackedUserOperation = {
