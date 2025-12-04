@@ -79,8 +79,31 @@ contract MockKernelForFactory is IKernel {
         installedModules[moduleTypeId][module] = true;
         moduleInitData[moduleTypeId][module] = initData;
 
+        bytes memory dataForOnInstall;
+
+        // Kernel v3 format for both validators and executors:
+        // First 20 bytes = hook address
+        // Rest = module-specific data
+        if (initData.length > 20) {
+            if (moduleTypeId == 1) {
+                // MODULE_TYPE_VALIDATOR: Format is | hook (20) | abi.encode(validatorData, hookData, selectorData) |
+                bytes memory structData = initData[20:];
+                (bytes memory validatorData, , ) = abi.decode(structData, (bytes, bytes, bytes));
+                dataForOnInstall = validatorData;
+            } else if (moduleTypeId == 2) {
+                // MODULE_TYPE_EXECUTOR: Format is | hook (20) | abi.encode(executorData, hookData) |
+                bytes memory structData = initData[20:];
+                (bytes memory executorData, ) = abi.decode(structData, (bytes, bytes));
+                dataForOnInstall = executorData;
+            } else {
+                dataForOnInstall = initData;
+            }
+        } else {
+            dataForOnInstall = initData;
+        }
+
         // Call onInstall on the module
-        (bool success,) = module.call(abi.encodeWithSignature("onInstall(bytes)", initData));
+        (bool success,) = module.call(abi.encodeWithSignature("onInstall(bytes)", dataForOnInstall));
         require(success, "Module install failed");
 
         emit ModuleInstalled(moduleTypeId, module);

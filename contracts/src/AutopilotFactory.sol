@@ -5,89 +5,58 @@ import {IKernel, IKernelFactory, IHook, ValidationId, ValidatorLib, MODULE_TYPE_
 import {AutoYieldModule} from "./AutoYieldModule.sol";
 import {AutomationValidator} from "./AutomationValidator.sol";
 
+//     ___         __              _ __      __
+//    /   | __  __/ /_____  ____  (_) /___  / /_
+//   / /| |/ / / / __/ __ \/ __ \/ / / __ \/ __/
+//  / ___ / /_/ / /_/ /_/ / /_/ / / / /_/ / /_
+// /_/  |_\__,_/\__/\____/ .___/_/_/\____/\__/
+//                      /_/
+//
+// Factory for deploying Autopilot smart wallets via ZeroDev Kernel v3
+// https://github.com/autopilot-wallet
+
 /**
  * @title AutopilotFactory
- * @notice Factory for deploying Autopilot wallets via ZeroDev Kernel
- * @dev Deploys Kernel v3 smart accounts with AutoYieldModule pre-installed.
- *
- *      Key features:
- *      - One-click wallet creation
- *      - AutoYieldModule pre-installed as executor
- *      - Global automation key registered for all wallets
- *      - Default adapter and threshold configured
- *
- *      Kernel v3.3 addresses (same on all EVM chains):
- *      - Factory: 0x2577507b78c2008Ff367261CB6285d44ba5eF2E9
- *      - Implementation: 0xd6CEDDe84be40893d153Be9d467CD6aD37875b28
- *      - ECDSA Validator: 0x845ADb2C711129d4f3966735eD98a9F09fC4cE57
+ * @author Autopilot
+ * @notice Factory for deploying Autopilot wallets with pre-installed yield automation
  */
 contract AutopilotFactory {
-    // ============ Errors ============
+
     error ZeroAddress();
     error AccountAlreadyExists();
 
-    // ============ Events ============
     event AccountCreated(address indexed account, address indexed owner, bytes32 salt);
     event DefaultsUpdated(address adapter, uint256 threshold);
 
-    // ============ Constants ============
-
-    /// @notice ERC-7579 module type for executor modules
     uint256 private constant EXECUTOR_MODULE_TYPE = MODULE_TYPE_EXECUTOR;
-
-    /// @notice ERC-7579 module type for validator modules
     uint256 private constant VALIDATOR_MODULE_TYPE = MODULE_TYPE_VALIDATOR;
 
-    /// @notice Allowed selectors for automation key
-    /// rebalance(address)
     bytes4 private constant SELECTOR_REBALANCE = 0x21c28191;
-    /// migrateStrategy(address,address)
     bytes4 private constant SELECTOR_MIGRATE = 0x6cb56d19;
+    bytes4 private constant SELECTOR_EXECUTE = 0xb61d27f6;
 
-    /// @notice Default checking threshold (100 USDC with 6 decimals)
     uint256 public constant DEFAULT_THRESHOLD = 100e6;
 
-    // ============ Immutables ============
-
-    /// @notice The ZeroDev Kernel Factory
     IKernelFactory public immutable kernelFactory;
-
-    /// @notice The ECDSA validator for owner signatures
     address public immutable ecdsaValidator;
-
-    /// @notice The AutoYieldModule implementation
     address public immutable autoYieldModule;
-
-    /// @notice The AutomationValidator for session key signatures
     address public immutable automationValidator;
 
-    // ============ State ============
-
-    /// @notice Global automation key (backend's session key)
-    /// @dev All wallets created by this factory trust this key
     address public automationKey;
-
-    /// @notice Default yield adapter for new wallets
     address public defaultAdapter;
-
-    /// @notice Default checking threshold for new wallets
     uint256 public defaultThreshold;
-
-    /// @notice Mapping of owner to their deployed account
-    mapping(address => address) public accountOf;
-
-    /// @notice Factory admin (can update defaults)
     address public admin;
 
-    // ============ Constructor ============
+    mapping(address => address) public accountOf;
 
     /**
-     * @param _kernelFactory Address of the deployed KernelFactory
-     * @param _ecdsaValidator Address of the ECDSA validator module
-     * @param _autoYieldModule Address of the AutoYieldModule implementation
-     * @param _automationValidator Address of the AutomationValidator implementation
-     * @param _defaultAdapter Address of the default YieldAdapter
-     * @param _automationKey Address of the global automation key
+     * @notice Deploy the Autopilot factory
+     * @param _kernelFactory ZeroDev Kernel factory address
+     * @param _ecdsaValidator ECDSA validator module address
+     * @param _autoYieldModule AutoYieldModule implementation address
+     * @param _automationValidator AutomationValidator implementation address
+     * @param _defaultAdapter Default yield adapter address
+     * @param _automationKey Global automation key address
      */
     constructor(
         address _kernelFactory,
@@ -113,12 +82,10 @@ contract AutopilotFactory {
         admin = msg.sender;
     }
 
-    // ============ External Functions ============
-
     /**
      * @notice Deploy a new Autopilot wallet for the caller
      * @param salt Salt for CREATE2 deterministic deployment
-     * @return account Address of the deployed account
+     * @return account Address of the deployed wallet
      */
     function createAccount(bytes32 salt) external returns (address account) {
         return createAccountFor(msg.sender, salt);
@@ -126,34 +93,28 @@ contract AutopilotFactory {
 
     /**
      * @notice Deploy a new Autopilot wallet for a specific owner
-     * @param owner Owner of the new account (EOA that controls it)
+     * @param owner Owner of the new wallet
      * @param salt Salt for CREATE2 deterministic deployment
-     * @return account Address of the deployed account
+     * @return account Address of the deployed wallet
      */
     function createAccountFor(address owner, bytes32 salt) public returns (address account) {
         if (owner == address(0)) revert ZeroAddress();
         if (accountOf[owner] != address(0)) revert AccountAlreadyExists();
 
-        // Build the initialization data
         bytes memory initData = _buildInitData(owner);
-
-        // Combine owner into salt for uniqueness
         bytes32 combinedSalt = keccak256(abi.encodePacked(owner, salt));
 
-        // Create the account via Kernel Factory
         account = kernelFactory.createAccount(initData, combinedSalt);
-
-        // Record the account
         accountOf[owner] = account;
 
         emit AccountCreated(account, owner, salt);
     }
 
     /**
-     * @notice Compute the address of an account before deployment
-     * @param owner Owner of the account
+     * @notice Compute the address of a wallet before deployment
+     * @param owner Owner of the wallet
      * @param salt Salt for CREATE2
-     * @return The predicted account address
+     * @return Predicted wallet address
      */
     function getAddress(address owner, bytes32 salt) external view returns (address) {
         bytes memory initData = _buildInitData(owner);
@@ -169,8 +130,6 @@ contract AutopilotFactory {
     function hasAccount(address owner) external view returns (bool) {
         return accountOf[owner] != address(0);
     }
-
-    // ============ Admin Functions ============
 
     /**
      * @notice Update default adapter for new wallets
@@ -212,63 +171,47 @@ contract AutopilotFactory {
         admin = _admin;
     }
 
-    // ============ Internal Functions ============
-
     /**
-     * @notice Build initialization data for Kernel.initialize()
+     * @dev Build initialization data for Kernel.initialize()
      * @param owner The EOA owner address
-     * @return Encoded call to Kernel.initialize
-     *
-     * @dev The initialization:
-     *      1. Sets ECDSA validator as root (owner can sign userOps)
-     *      2. Installs AutoYieldModule as executor
-     *      3. Installs AutomationValidator for session key automation
+     * @return Encoded initialization call
      */
     function _buildInitData(address owner) internal view returns (bytes memory) {
-        // Create ValidationId for ECDSA validator
         ValidationId rootValidator = ValidatorLib.validatorToIdentifier(ecdsaValidator);
-
-        // ECDSA validator expects owner address as init data
         bytes memory validatorData = abi.encodePacked(owner);
-
-        // No hook for root validator
         IHook noHook = IHook(address(0));
         bytes memory hookData = "";
 
-        // Build AutoYieldModule init data: (defaultAdapter, automationKey, defaultThreshold)
-        bytes memory executorInitData = abi.encode(
-            defaultAdapter,
-            automationKey,
-            defaultThreshold
+        bytes memory executorOnInstallData = abi.encode(defaultAdapter, automationKey, defaultThreshold);
+
+        bytes memory executorInstallData = abi.encodePacked(
+            bytes20(address(0)),
+            abi.encode(executorOnInstallData, bytes(""))
         );
 
-        // Build AutomationValidator init data: (automationKey, autoYieldModule, selectors[])
         bytes4[] memory allowedSelectors = new bytes4[](2);
         allowedSelectors[0] = SELECTOR_REBALANCE;
         allowedSelectors[1] = SELECTOR_MIGRATE;
 
-        bytes memory validatorInitData = abi.encode(
-            automationKey,
-            autoYieldModule,
-            allowedSelectors
+        bytes memory validatorOnInstallData = abi.encode(automationKey, autoYieldModule, allowedSelectors);
+
+        bytes memory validatorInstallData = abi.encodePacked(
+            bytes20(address(0)),
+            abi.encode(validatorOnInstallData, bytes(""), abi.encodePacked(SELECTOR_EXECUTE))
         );
 
-        // Build initConfig to install both modules
         bytes[] memory initConfig = new bytes[](2);
 
-        // Install AutoYieldModule as executor
         initConfig[0] = abi.encodeCall(
             IKernel.installModule,
-            (EXECUTOR_MODULE_TYPE, autoYieldModule, executorInitData)
+            (EXECUTOR_MODULE_TYPE, autoYieldModule, executorInstallData)
         );
 
-        // Install AutomationValidator as secondary validator
         initConfig[1] = abi.encodeCall(
             IKernel.installModule,
-            (VALIDATOR_MODULE_TYPE, automationValidator, validatorInitData)
+            (VALIDATOR_MODULE_TYPE, automationValidator, validatorInstallData)
         );
 
-        // Encode the full initialize call
         return abi.encodeCall(
             IKernel.initialize,
             (rootValidator, noHook, validatorData, hookData, initConfig)

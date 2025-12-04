@@ -7,22 +7,24 @@ import {IKernel} from "./interfaces/IKernel.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+//     ___         __              _ __      __
+//    /   | __  __/ /_____  ____  (_) /___  / /_
+//   / /| |/ / / / __/ __ \/ __ \/ / / __ \/ __/
+//  / ___ / /_/ / /_/ /_/ / /_/ / / / /_/ / /_
+// /_/  |_\__,_/\__/\____/ .___/_/_/\____/\__/
+//                      /_/
+//
+// ERC-7579 executor module for automatic yield management
+// https://github.com/autopilot-wallet
+
 /**
  * @title AutoYieldModule
- * @notice ERC-7579 executor module that automatically manages yield allocation
- * @dev The brain of Autopilot Wallet. Installed on each Kernel smart account.
- *
- *      Core functionality:
- *      1. executeWithAutoYield() - User spending with auto-unstake
- *      2. rebalance() - Move excess checking balance to yield
- *      3. migrateStrategy() - Switch between yield adapters
- *
- *      All operations happen within a single userOp.
+ * @author Autopilot
+ * @notice Automatically manages yield allocation for smart wallet balances
  */
 contract AutoYieldModule is IExecutorModule {
     using SafeERC20 for IERC20;
 
-    // ============ Errors ============
     error NotInitialized();
     error AlreadyInitialized();
     error InvalidAdapter();
@@ -30,7 +32,6 @@ contract AutoYieldModule is IExecutorModule {
     error InsufficientBalance();
     error UnauthorizedCaller();
 
-    // ============ Events ============
     event Initialized(address indexed account, address indexed adapter);
     event ThresholdUpdated(address indexed account, address indexed token, uint256 threshold);
     event AdapterUpdated(address indexed account, address indexed token, address adapter);
@@ -42,29 +43,12 @@ contract AutoYieldModule is IExecutorModule {
     event StrategyMigrated(address indexed account, address indexed token, address from, address to);
     event ExecutedWithAutoYield(address indexed account, address indexed to, uint256 value);
 
-    // ============ Storage ============
-
-    /// @notice Whether an account has been initialized
     mapping(address account => bool) public isInitialized;
-
-    /// @notice Checking threshold per account per token
-    /// @dev Balance to keep liquid. Excess goes to yield.
     mapping(address account => mapping(address token => uint256)) public checkingThreshold;
-
-    /// @notice Current yield adapter per account per token
     mapping(address account => mapping(address token => address)) public currentAdapter;
-
-    /// @notice Allowed adapters per account (whitelist for security)
     mapping(address account => mapping(address adapter => bool)) public allowedAdapters;
-
-    /// @notice Automation key per account (can call rebalance/migrate)
     mapping(address account => address) public automationKey;
 
-    // ============ Modifiers ============
-
-    /**
-     * @dev Only the smart account itself or authorized automation key can call
-     */
     modifier onlyAuthorized(address account) {
         if (msg.sender != account && msg.sender != automationKey[account]) {
             revert UnauthorizedCaller();
@@ -72,17 +56,12 @@ contract AutoYieldModule is IExecutorModule {
         _;
     }
 
-    /**
-     * @dev Only the smart account itself can call (owner operations)
-     */
     modifier onlyAccount(address account) {
         if (msg.sender != account) {
             revert UnauthorizedCaller();
         }
         _;
     }
-
-    // ============ ERC-7579 Module Interface ============
 
     /**
      * @notice Called when module is installed on an account
@@ -92,17 +71,14 @@ contract AutoYieldModule is IExecutorModule {
         address account = msg.sender;
         if (isInitialized[account]) revert AlreadyInitialized();
 
-        // Decode initialization data
         (address defaultAdapter, address _automationKey, uint256 initialThreshold) =
             abi.decode(data, (address, address, uint256));
 
         if (defaultAdapter == address(0)) revert InvalidAdapter();
 
-        // Set up the account
         isInitialized[account] = true;
         automationKey[account] = _automationKey;
 
-        // Allow and set the default adapter for USDC
         address usdc = IYieldAdapter(defaultAdapter).asset();
         allowedAdapters[account][defaultAdapter] = true;
         currentAdapter[account][usdc] = defaultAdapter;
@@ -115,13 +91,12 @@ contract AutoYieldModule is IExecutorModule {
 
     /**
      * @notice Called when module is uninstalled from an account
-     * @param data Optional de-init data (unused)
+     * @param data Unused
      */
     function onUninstall(bytes calldata data) external override {
         address account = msg.sender;
         isInitialized[account] = false;
-        // Note: User should flush funds to checking before uninstalling
-        data; // silence warning
+        data;
     }
 
     /**
@@ -133,17 +108,9 @@ contract AutoYieldModule is IExecutorModule {
         return moduleTypeId == MODULE_TYPE_EXECUTOR;
     }
 
-    // ============ Core Functions ============
-
     /**
      * @notice Execute a call with automatic yield management
-     * @dev The main user-facing function. Sequence:
-     *      1. Check if checking balance covers amount + threshold
-     *      2. If not, withdraw deficit from yield
-     *      3. Execute the user's intended call
-     *      4. If surplus remains, deposit to yield
-     *
-     * @param token Token being spent (for auto-unstake)
+     * @param token Token being spent
      * @param to Target address for the call
      * @param value ETH value to send
      * @param data Calldata for the call
@@ -160,16 +127,10 @@ contract AutoYieldModule is IExecutorModule {
         uint256 threshold = checkingThreshold[account][token];
         address adapter = currentAdapter[account][token];
 
-        // Step 1: Get current checking balance
         uint256 checking = IERC20(token).balanceOf(account);
-
-        // Step 2: Calculate how much we need (for token transfers embedded in data)
-        // For simple transfers, we parse the amount from data
-        // For complex calls, user should ensure sufficient balance
         uint256 amountNeeded = _extractTransferAmount(data, token);
         uint256 required = amountNeeded + threshold;
 
-        // Step 3: Withdraw from yield if checking is insufficient
         if (checking < required && adapter != address(0)) {
             uint256 deficit = required - checking;
             uint256 yieldBalance = _getYieldBalance(account, adapter);
@@ -181,10 +142,8 @@ contract AutoYieldModule is IExecutorModule {
             }
         }
 
-        // Step 4: Execute the user's call via the Kernel account
         IKernel(account).execute(to, value, data);
 
-        // Step 5: Check if we should deposit surplus to yield
         uint256 newChecking = IERC20(token).balanceOf(account);
         if (newChecking > threshold && adapter != address(0)) {
             uint256 surplus = newChecking - threshold;
@@ -197,9 +156,6 @@ contract AutoYieldModule is IExecutorModule {
 
     /**
      * @notice Rebalance funds between checking and yield
-     * @dev Called by automation after user receives funds.
-     *      Deposits any excess above threshold into yield.
-     *
      * @param token Token to rebalance
      */
     function rebalance(address token) external onlyAuthorized(msg.sender) {
@@ -209,7 +165,7 @@ contract AutoYieldModule is IExecutorModule {
         uint256 threshold = checkingThreshold[account][token];
         address adapter = currentAdapter[account][token];
 
-        if (adapter == address(0)) return; // No adapter configured
+        if (adapter == address(0)) return;
 
         uint256 checking = IERC20(token).balanceOf(account);
 
@@ -222,9 +178,6 @@ contract AutoYieldModule is IExecutorModule {
 
     /**
      * @notice Migrate funds from current adapter to a new one
-     * @dev Called by automation when a better yield source is found.
-     *      The new adapter must be in the allowlist.
-     *
      * @param token Token to migrate
      * @param newAdapter Address of the new adapter
      */
@@ -237,9 +190,8 @@ contract AutoYieldModule is IExecutorModule {
         if (!allowedAdapters[account][newAdapter]) revert AdapterNotAllowed();
 
         address oldAdapter = currentAdapter[account][token];
-        if (oldAdapter == newAdapter) return; // Already on this adapter
+        if (oldAdapter == newAdapter) return;
 
-        // Step 1: Withdraw everything from old adapter
         if (oldAdapter != address(0)) {
             uint256 yieldBalance = _getYieldBalance(account, oldAdapter);
             if (yieldBalance > 0) {
@@ -247,7 +199,6 @@ contract AutoYieldModule is IExecutorModule {
             }
         }
 
-        // Step 2: Deposit surplus to new adapter (respecting threshold)
         uint256 threshold = checkingThreshold[account][token];
         uint256 checking = IERC20(token).balanceOf(account);
 
@@ -256,14 +207,13 @@ contract AutoYieldModule is IExecutorModule {
             _depositToYield(account, newAdapter, token, toDeposit);
         }
 
-        // Step 3: Update current adapter
         currentAdapter[account][token] = newAdapter;
 
         emit StrategyMigrated(account, token, oldAdapter, newAdapter);
     }
 
     /**
-     * @notice Emergency: withdraw all funds from yield to checking
+     * @notice Withdraw all funds from yield to checking
      * @param token Token to flush
      */
     function flushToChecking(address token) external onlyAccount(msg.sender) {
@@ -279,12 +229,10 @@ contract AutoYieldModule is IExecutorModule {
         }
     }
 
-    // ============ Configuration Functions (Owner Only) ============
-
     /**
      * @notice Set the checking threshold for a token
      * @param token Token address
-     * @param threshold New threshold (e.g., 100e6 for 100 USDC)
+     * @param threshold New threshold
      */
     function setCheckingThreshold(address token, uint256 threshold) external onlyAccount(msg.sender) {
         checkingThreshold[msg.sender][token] = threshold;
@@ -294,7 +242,7 @@ contract AutoYieldModule is IExecutorModule {
     /**
      * @notice Set the current adapter for a token
      * @param token Token address
-     * @param adapter Adapter address (must be allowed)
+     * @param adapter Adapter address
      */
     function setCurrentAdapter(address token, address adapter) external onlyAccount(msg.sender) {
         if (adapter != address(0) && !allowedAdapters[msg.sender][adapter]) {
@@ -316,14 +264,12 @@ contract AutoYieldModule is IExecutorModule {
 
     /**
      * @notice Set the automation key for background operations
-     * @param key New automation key (address(0) to disable)
+     * @param key New automation key
      */
     function setAutomationKey(address key) external onlyAccount(msg.sender) {
         automationKey[msg.sender] = key;
         emit AutomationKeyUpdated(msg.sender, key);
     }
-
-    // ============ View Functions ============
 
     /**
      * @notice Get total balance (checking + yield) for a token
@@ -355,7 +301,7 @@ contract AutoYieldModule is IExecutorModule {
      * @notice Get yield balance for a token
      * @param account Account address
      * @param token Token address
-     * @return Yield balance in underlying tokens
+     * @return Yield balance
      */
     function getYieldBalance(address account, address token) external view returns (uint256) {
         address adapter = currentAdapter[account][token];
@@ -363,46 +309,27 @@ contract AutoYieldModule is IExecutorModule {
         return _getYieldBalance(account, adapter);
     }
 
-    // ============ Internal Functions ============
-
-    /**
-     * @dev Get yield balance from adapter
-     *      Note: We need to call as the account since totalValue() uses msg.sender
-     */
     function _getYieldBalance(address account, address adapter) internal view returns (uint256) {
-        // The adapter tracks balances by msg.sender, but we're calling from the module
-        // So we need a different approach - check the vault shares directly
-        // For now, we'll use a try/catch with the adapter's totalValueOf if available
         try IYieldAdapterExtended(adapter).totalValueOf(account) returns (uint256 value) {
             return value;
         } catch {
-            // Fallback: assume adapter uses msg.sender and return 0
-            // This will be fixed when we integrate properly with Kernel execution
             return 0;
         }
     }
 
-    /**
-     * @dev Deposit to yield via Kernel execution
-     */
     function _depositToYield(
         address account,
         address adapter,
         address token,
         uint256 amount
     ) internal {
-        // Approve adapter to spend tokens
         bytes memory approveData = abi.encodeCall(IERC20.approve, (adapter, amount));
         IKernel(account).execute(token, 0, approveData);
 
-        // Call adapter.deposit(amount)
         bytes memory depositData = abi.encodeCall(IYieldAdapter.deposit, (amount));
         IKernel(account).execute(adapter, 0, depositData);
     }
 
-    /**
-     * @dev Withdraw from yield via Kernel execution
-     */
     function _withdrawFromYield(
         address account,
         address adapter,
@@ -412,28 +339,18 @@ contract AutoYieldModule is IExecutorModule {
         IKernel(account).execute(adapter, 0, withdrawData);
     }
 
-    /**
-     * @dev Extract transfer amount from calldata
-     *      Handles ERC20.transfer(to, amount) calls
-     */
     function _extractTransferAmount(bytes calldata data, address token) internal pure returns (uint256) {
-        // Check if this is an ERC20 transfer call
         if (data.length >= 68) {
             bytes4 selector = bytes4(data[:4]);
-            // transfer(address,uint256) selector
             if (selector == IERC20.transfer.selector) {
-                // Amount is the second parameter (bytes 36-68)
                 return abi.decode(data[36:68], (uint256));
             }
         }
-        token; // silence warning
+        token;
         return 0;
     }
 }
 
-/**
- * @dev Extended interface for adapters that support totalValueOf
- */
 interface IYieldAdapterExtended {
     function totalValueOf(address account) external view returns (uint256);
 }
