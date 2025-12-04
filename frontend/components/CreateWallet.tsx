@@ -1,16 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useSwitchChain } from "wagmi";
 import { keccak256, toBytes } from "viem";
+import { base } from "wagmi/chains";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CONTRACTS, FACTORY_ABI } from "@/lib/constants";
 import { saveWallet } from "@/lib/services/wallet";
 
 export function CreateWallet() {
-  const { address: ownerAddress, isConnected } = useAccount();
+  const { address: ownerAddress, isConnected, chainId } = useAccount();
+  const { switchChain } = useSwitchChain();
   const [hasRedirected, setHasRedirected] = useState(false);
+
+  // Check if on correct chain
+  const isOnBase = chainId === base.id;
 
   // Generate salt from owner address
   const salt = ownerAddress ? keccak256(toBytes(ownerAddress)) : null;
@@ -52,9 +57,14 @@ export function CreateWallet() {
     }
   }, [existingAccount, ownerAddress, hasRedirected]);
 
+  // Switch to Base network
+  const handleSwitchChain = () => {
+    switchChain({ chainId: base.id });
+  };
+
   // Create the wallet - uses msg.sender as owner
   const handleCreate = () => {
-    if (!salt) return;
+    if (!salt || !isOnBase) return;
 
     writeContract({
       address: CONTRACTS.FACTORY,
@@ -123,22 +133,38 @@ export function CreateWallet() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!isOnBase && (
+          <div className="bg-yellow-900/50 border border-yellow-600 rounded-lg p-3 text-sm text-yellow-200">
+            You're not on Base network. Click below to switch.
+          </div>
+        )}
+
         <div className="text-sm text-gray-400">
           <p>Owner: {ownerAddress?.slice(0, 6)}...{ownerAddress?.slice(-4)}</p>
           {predictedAddress && (
             <p>Wallet address: {(predictedAddress as string).slice(0, 6)}...{(predictedAddress as string).slice(-4)}</p>
           )}
+          <p className="mt-1">Network: {isOnBase ? "Base" : `Wrong chain (${chainId})`}</p>
         </div>
 
-        <Button
-          onClick={handleCreate}
-          disabled={isPending || isConfirming || !salt}
-          className="w-full"
-        >
-          {isPending ? "Waiting for signature..." :
-           isConfirming ? "Creating wallet..." :
-           "Create Wallet"}
-        </Button>
+        {!isOnBase ? (
+          <Button
+            onClick={handleSwitchChain}
+            className="w-full"
+          >
+            Switch to Base Network
+          </Button>
+        ) : (
+          <Button
+            onClick={handleCreate}
+            disabled={isPending || isConfirming || !salt}
+            className="w-full"
+          >
+            {isPending ? "Waiting for signature..." :
+             isConfirming ? "Creating wallet..." :
+             "Create Wallet"}
+          </Button>
+        )}
 
         {error && (
           <p className="text-red-400 text-sm">{error.message}</p>

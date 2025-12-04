@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useAccount } from "wagmi";
+import { useAccount, useReadContract } from "wagmi";
 import {
   HeroSection,
   FeatureCard,
@@ -10,6 +10,8 @@ import {
   ZapIcon,
   CursorClickIcon,
 } from "@/components/landing";
+import { CONTRACTS, FACTORY_ABI } from "@/lib/constants";
+import { clearSavedWallet } from "@/lib/services/wallet";
 
 const FEATURES = [
   {
@@ -37,33 +39,35 @@ const FEATURES = [
 
 export default function LandingPage() {
   const router = useRouter();
-  const { isConnected } = useAccount();
-  const [hasWallet, setHasWallet] = useState<boolean | null>(null);
+  const { address: ownerAddress, isConnected } = useAccount();
+
+  // Check on-chain if user has a wallet
+  const { data: onChainAccount, isLoading: isCheckingOnChain } = useReadContract({
+    address: CONTRACTS.FACTORY,
+    abi: FACTORY_ABI,
+    functionName: "accountOf",
+    args: ownerAddress ? [ownerAddress] : undefined,
+    query: {
+      enabled: !!ownerAddress,
+    },
+  });
+
+  const hasWallet = onChainAccount && onChainAccount !== "0x0000000000000000000000000000000000000000";
 
   useEffect(() => {
-    // Check if user already has an Autopilot wallet
-    const storedAddress = localStorage.getItem("autopilotWalletAddress");
-    setHasWallet(!!storedAddress);
-
-    // If connected and has wallet, redirect to dashboard
-    if (isConnected && storedAddress) {
+    // If connected and has on-chain wallet, redirect to dashboard
+    if (isConnected && !isCheckingOnChain && hasWallet) {
       router.push("/dashboard");
     }
-  }, [isConnected, router]);
 
-  const handleCreateWallet = useCallback(async () => {
-    // Mocked wallet creation - simulates async operation
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Clear stale localStorage if no on-chain wallet
+    if (isConnected && !isCheckingOnChain && !hasWallet) {
+      clearSavedWallet();
+    }
+  }, [isConnected, isCheckingOnChain, hasWallet, router]);
 
-    // In production, this would call the actual wallet creation service
-    // For now, we mock a successful creation
-    const mockWalletAddress = `0x${Math.random().toString(16).slice(2, 42).padEnd(40, "0")}`;
-    localStorage.setItem("autopilotWalletAddress", mockWalletAddress);
-
-    // Redirect to dashboard after a brief delay
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 1500);
+  const handleCreateWallet = useCallback(() => {
+    router.push("/create");
   }, [router]);
 
   const handleGoToDashboard = useCallback(() => {
@@ -71,12 +75,12 @@ export default function LandingPage() {
   }, [router]);
 
   // Show loading state while checking wallet status
-  if (hasWallet === null) {
+  if (isConnected && isCheckingOnChain) {
     return (
       <div className="min-h-[calc(100vh-12rem)] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-gray-400">Loading...</span>
+          <span className="text-gray-400">Checking wallet status...</span>
         </div>
       </div>
     );
@@ -86,7 +90,7 @@ export default function LandingPage() {
     <div className="min-h-[calc(100vh-12rem)]">
       {/* Hero Section */}
       <HeroSection
-        hasWallet={hasWallet}
+        hasWallet={!!hasWallet}
         onCreateWallet={handleCreateWallet}
         onGoToDashboard={handleGoToDashboard}
       />

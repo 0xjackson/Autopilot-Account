@@ -120,7 +120,7 @@ export const MODULE_ABI = [
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view",
   },
-  // Configuration state
+  // Configuration state (public mappings)
   {
     name: "checkingThreshold",
     type: "function",
@@ -155,7 +155,17 @@ export const MODULE_ABI = [
     outputs: [{ name: "", type: "address" }],
     stateMutability: "view",
   },
-  // Configuration functions (called via smart wallet)
+  {
+    name: "allowedAdapters",
+    type: "function",
+    inputs: [
+      { name: "account", type: "address" },
+      { name: "adapter", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  // Configuration functions (called via smart wallet - onlyAccount modifier)
   {
     name: "setCheckingThreshold",
     type: "function",
@@ -170,6 +180,26 @@ export const MODULE_ABI = [
     name: "setAutomationKey",
     type: "function",
     inputs: [{ name: "key", type: "address" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    name: "setCurrentAdapter",
+    type: "function",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "adapter", type: "address" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    name: "setAdapterAllowed",
+    type: "function",
+    inputs: [
+      { name: "adapter", type: "address" },
+      { name: "allowed", type: "bool" },
+    ],
     outputs: [],
     stateMutability: "nonpayable",
   },
@@ -193,10 +223,21 @@ export const MODULE_ABI = [
     outputs: [],
     stateMutability: "nonpayable",
   },
+  // Automation functions (onlyAuthorized - account or automationKey)
   {
     name: "rebalance",
     type: "function",
     inputs: [{ name: "token", type: "address" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    name: "migrateStrategy",
+    type: "function",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "newAdapter", type: "address" },
+    ],
     outputs: [],
     stateMutability: "nonpayable",
   },
