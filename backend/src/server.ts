@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from "express";
+import cors from "cors";
 import {
   getStrategiesForToken,
   getBestStrategy,
@@ -52,9 +53,22 @@ import {
 } from "./scheduler";
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
+
+// ============================================================================
+// Wallet Registry (in-memory storage)
+// ============================================================================
+
+interface RegisteredWallet {
+  wallet: string;
+  owner: string;
+  createdAt: Date;
+}
+
+const walletRegistry = new Map<string, RegisteredWallet>();
 
 // Middleware
+app.use(cors()); // Enable CORS for all origins
 app.use(express.json());
 
 // Request logging middleware
@@ -148,6 +162,9 @@ app.get("/", (_req: Request, res: Response) => {
     message: "AutoYield Backend is running",
     endpoints: [
       "/health",
+      "/register",
+      "/wallets",
+      "/wallet/:address",
       "/strategies",
       "/recommend",
       "/recommendations",
@@ -161,6 +178,7 @@ app.get("/", (_req: Request, res: Response) => {
       "/admin/cache-status",
     ],
     scheduler: getSchedulerStatus(),
+    registeredWallets: walletRegistry.size,
   });
 });
 
@@ -170,6 +188,89 @@ app.get("/", (_req: Request, res: Response) => {
  */
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
+});
+
+// ============================================================================
+// Wallet Registry Endpoints
+// ============================================================================
+
+/**
+ * POST /register
+ * Register a new wallet after on-chain creation
+ *
+ * Body:
+ *   - wallet: string (required, smart wallet address)
+ *   - owner: string (required, EOA owner address)
+ */
+app.post("/register", (req: Request, res: Response) => {
+  const { wallet, owner } = req.body;
+
+  // Validate required fields
+  if (!wallet || !owner) {
+    const errorResponse: ErrorResponse = {
+      error: "Missing required fields: wallet and owner",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  // Validate wallet address format
+  if (!isValidWalletAddress(wallet)) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid wallet address format. Must be 0x followed by 40 hex characters.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  // Validate owner address format
+  if (!isValidWalletAddress(owner)) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid owner address format. Must be 0x followed by 40 hex characters.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  const walletLower = wallet.toLowerCase();
+  const ownerLower = owner.toLowerCase();
+
+  // Idempotent: update if exists, create if not
+  walletRegistry.set(walletLower, {
+    wallet: walletLower,
+    owner: ownerLower,
+    createdAt: walletRegistry.get(walletLower)?.createdAt || new Date(),
+  });
+
+  console.log(`[registry] Wallet registered: ${walletLower} (owner: ${ownerLower})`);
+
+  return res.json({ ok: true, wallet: walletLower });
+});
+
+/**
+ * GET /wallets
+ * List all registered wallet addresses
+ * Used by scheduler to know which wallets to automate
+ */
+app.get("/wallets", (_req: Request, res: Response) => {
+  const wallets = Array.from(walletRegistry.keys());
+  return res.json(wallets);
+});
+
+/**
+ * GET /wallet/:address
+ * Get details for a specific registered wallet
+ */
+app.get("/wallet/:address", (req: Request, res: Response) => {
+  const address = req.params.address.toLowerCase();
+
+  const wallet = walletRegistry.get(address);
+
+  if (!wallet) {
+    const errorResponse: ErrorResponse = {
+      error: `Wallet not found: ${address}`,
+    };
+    return res.status(404).json(errorResponse);
+  }
+
+  return res.json(wallet);
 });
 
 /**
@@ -888,6 +989,10 @@ app.listen(PORT, () => {
 ║    GET  /recommendations     - Strategies by prefs (B2)   ║
 ║    GET  /tokens              - Available tokens on chain  ║
 ║    GET  /chains              - Supported chain IDs        ║
+║  Wallet Registry:                                         ║
+║    POST /register            - Register a new wallet      ║
+║    GET  /wallets             - List registered wallets    ║
+║    GET  /wallet/:address     - Get wallet details         ║
 ║  Scheduler (B3):                                          ║
 ║    GET  /rebalance-tasks     - List all tasks             ║
 ║    POST /rebalance-tasks     - Create a task              ║

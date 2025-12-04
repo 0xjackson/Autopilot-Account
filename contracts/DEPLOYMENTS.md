@@ -2,15 +2,16 @@
 
 ## Base Mainnet (Chain ID: 8453)
 
-Last Updated: December 3, 2024
+Last Updated: December 4, 2024
 
 ### Core Contracts
 
 | Contract | Address | Description |
 |----------|---------|-------------|
-| **AutoYieldModule** | [`0xC35Eeb30a36d1ac157B41719BEAf513a0C557Bce`](https://basescan.org/address/0xC35Eeb30a36d1ac157B41719BEAf513a0C557Bce) | ERC-7579 executor module - the brain of auto-yield logic |
-| **MorphoAdapter** | [`0x8438E34f258044cf656EBA796B8559bA1ee3020a`](https://basescan.org/address/0x8438E34f258044cf656EBA796B8559bA1ee3020a) | Adapter for Moonwell Flagship USDC vault |
-| **AutopilotFactory** | [`0xc627874FE7444f8e9750e5043c19bA01E990D581`](https://basescan.org/address/0xc627874FE7444f8e9750e5043c19bA01E990D581) | Factory for deploying Autopilot smart wallets |
+| **AutopilotFactory** | [`0xcf10279BAA0d5407Dbb637517d23055A55E72923`](https://basescan.org/address/0xcf10279BAA0d5407Dbb637517d23055A55E72923) | Factory for deploying Autopilot smart wallets |
+| **AutoYieldModule** | [`0x71b5A4663A49FF02BE672Ea9560256D2268727B7`](https://basescan.org/address/0x71b5A4663A49FF02BE672Ea9560256D2268727B7) | ERC-7579 executor module for auto-yield logic |
+| **AutomationValidator** | [`0xe29ed376a2780f653C14EEC203eD25094c0E772A`](https://basescan.org/address/0xe29ed376a2780f653C14EEC203eD25094c0E772A) | ERC-7579 validator for automation key signatures |
+| **MorphoAdapter** | [`0x42EFecD83447e5b90c5F706309FaC8f9615bd68F`](https://basescan.org/address/0x42EFecD83447e5b90c5F706309FaC8f9615bd68F) | Adapter for Moonwell Flagship USDC vault |
 
 ### Configuration
 
@@ -31,11 +32,11 @@ Last Updated: December 3, 2024
 ## Quick Copy-Paste
 
 ```typescript
-// Frontend/Backend constants
 export const CONTRACTS = {
-  FACTORY: "0xc627874FE7444f8e9750e5043c19bA01E990D581",
-  MODULE: "0xC35Eeb30a36d1ac157B41719BEAf513a0C557Bce",
-  ADAPTER: "0x8438E34f258044cf656EBA796B8559bA1ee3020a",
+  FACTORY: "0xcf10279BAA0d5407Dbb637517d23055A55E72923",
+  MODULE: "0x71b5A4663A49FF02BE672Ea9560256D2268727B7",
+  VALIDATOR: "0xe29ed376a2780f653C14EEC203eD25094c0E772A",
+  ADAPTER: "0x42EFecD83447e5b90c5F706309FaC8f9615bd68F",
   USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 } as const;
 
@@ -45,19 +46,15 @@ AUTOMATION_PUBLIC_ADDRESS=0xD78F5099987389e33bD6Ec15FF3Ca4dBedD507f3
 
 ---
 
-## Testing
+## Deployment History
 
-```bash
-cd contracts
+### v2 - December 4, 2024
+- Fixed Kernel v3 module install data format (executor + validator)
+- Added AutomationValidator for session key UserOp signing
+- All contracts verified on Basescan
 
-# Verify deployed contracts work
-forge script script/TestDeployment.s.sol:TestDeployment \
-  --rpc-url https://mainnet.base.org -vvv
-
-# Unit tests
-forge test --match-contract AutoYieldModuleTest
-
-# Fork tests against real Morpho
-BASESCAN_API_KEY=dummy forge test --match-contract MorphoAdapterForkTest \
-  --fork-url https://mainnet.base.org --fork-block-number 23000000
-```
+### v1 - December 3, 2024 (Deprecated)
+- Initial deployment
+- AutopilotFactory: `0xc627874FE7444f8e9750e5043c19bA01E990D581`
+- AutoYieldModule: `0xC35Eeb30a36d1ac157B41719BEAf513a0C557Bce`
+- MorphoAdapter: `0x8438E34f258044cf656EBA796B8559bA1ee3020a`
