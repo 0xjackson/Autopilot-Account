@@ -11,12 +11,11 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * @notice Adapter for Morpho MetaMorpho vaults (ERC-4626 compliant)
  * @dev Wraps a single MetaMorpho vault. Deploy one adapter per vault.
  *
- *      MetaMorpho vaults on Base offer 5-7% APY on USDC.
- *      All MetaMorpho vaults implement ERC-4626, making this adapter simple.
+ *      Design: The adapter holds vault shares on behalf of users and tracks
+ *      ownership internally. This avoids the need for users to approve the
+ *      adapter for share transfers on every withdrawal.
  *
- *      Example vaults on Base mainnet:
- *      - Steakhouse USDC: 0xBEEF...
- *      - Gauntlet USDC: 0x...
+ *      MetaMorpho vaults on Base offer 5-7% APY on USDC.
  */
 contract MorphoAdapter is IYieldAdapter {
     using SafeERC20 for IERC20;
@@ -38,6 +37,14 @@ contract MorphoAdapter is IYieldAdapter {
     /// @notice The underlying asset (e.g., USDC)
     IERC20 public immutable _asset;
 
+    // ============ State ============
+
+    /// @notice Shares owned by each account (held by this adapter)
+    mapping(address => uint256) public sharesOf;
+
+    /// @notice Total shares held by this adapter
+    uint256 public totalSharesHeld;
+
     // ============ Constructor ============
 
     /**
@@ -57,23 +64,24 @@ contract MorphoAdapter is IYieldAdapter {
      * @dev Flow:
      *      1. Pull underlying tokens from caller
      *      2. Approve vault to spend tokens
-     *      3. Deposit to vault, receive shares
-     *      4. Shares are held by THIS contract, tracked per caller
-     *
-     *      Note: In this implementation, shares go to the CALLER directly.
-     *      The vault.deposit() sends shares to the receiver we specify.
+     *      3. Deposit to vault (adapter receives shares)
+     *      4. Credit shares to caller's internal balance
      */
     function deposit(uint256 amount) external override returns (uint256 shares) {
         if (amount == 0) revert ZeroAmount();
 
-        // Pull tokens from caller (caller must have approved this adapter)
+        // Pull tokens from caller
         _asset.safeTransferFrom(msg.sender, address(this), amount);
 
         // Approve vault to spend tokens
         _asset.approve(address(_vault), amount);
 
-        // Deposit to vault - shares go directly to caller
-        shares = _vault.deposit(amount, msg.sender);
+        // Deposit to vault - shares come to this adapter
+        shares = _vault.deposit(amount, address(this));
+
+        // Credit shares to caller
+        sharesOf[msg.sender] += shares;
+        totalSharesHeld += shares;
 
         emit Deposited(msg.sender, amount, shares);
     }
@@ -81,23 +89,28 @@ contract MorphoAdapter is IYieldAdapter {
     /**
      * @inheritdoc IYieldAdapter
      * @dev Flow:
-     *      1. Calculate shares needed for the requested amount
-     *      2. Withdraw from vault (burns caller's shares)
-     *      3. Assets sent directly to caller
+     *      1. Check caller has enough shares
+     *      2. Redeem shares from vault (adapter burns its shares)
+     *      3. Debit caller's internal share balance
+     *      4. Transfer assets to caller
      */
     function withdraw(uint256 amount) external override returns (uint256 actualAmount) {
         if (amount == 0) revert ZeroAmount();
 
-        // Check caller has enough shares
-        uint256 sharesNeeded = _vault.previewWithdraw(amount);
-        uint256 callerShares = _vault.balanceOf(msg.sender);
+        // Calculate shares needed
+        uint256 sharesToBurn = _vault.previewWithdraw(amount);
+        uint256 callerShares = sharesOf[msg.sender];
 
-        if (callerShares < sharesNeeded) revert InsufficientShares();
+        if (callerShares < sharesToBurn) revert InsufficientShares();
 
-        // Withdraw from vault - assets go to caller, burns caller's shares
-        actualAmount = _vault.withdraw(amount, msg.sender, msg.sender);
+        // Debit shares from caller's balance
+        sharesOf[msg.sender] -= sharesToBurn;
+        totalSharesHeld -= sharesToBurn;
 
-        emit Withdrawn(msg.sender, actualAmount, sharesNeeded);
+        // Withdraw from vault - adapter burns its shares, assets go to caller
+        actualAmount = _vault.withdraw(amount, msg.sender, address(this));
+
+        emit Withdrawn(msg.sender, actualAmount, sharesToBurn);
     }
 
     /**
@@ -105,7 +118,7 @@ contract MorphoAdapter is IYieldAdapter {
      * @dev Returns value of caller's shares in underlying tokens
      */
     function totalValue() external view override returns (uint256) {
-        uint256 shares = _vault.balanceOf(msg.sender);
+        uint256 shares = sharesOf[msg.sender];
         return _vault.convertToAssets(shares);
     }
 
@@ -131,17 +144,8 @@ contract MorphoAdapter is IYieldAdapter {
      * @return Total value in underlying tokens
      */
     function totalValueOf(address account) external view returns (uint256) {
-        uint256 shares = _vault.balanceOf(account);
+        uint256 shares = sharesOf[account];
         return _vault.convertToAssets(shares);
-    }
-
-    /**
-     * @notice Get share balance for any account
-     * @param account Account to check
-     * @return Share balance in the vault
-     */
-    function sharesOf(address account) external view returns (uint256) {
-        return _vault.balanceOf(account);
     }
 
     /**
@@ -154,7 +158,7 @@ contract MorphoAdapter is IYieldAdapter {
     }
 
     /**
-     * @notice Preview how many assets would be received for a withdrawal
+     * @notice Preview how many shares would be burned for a withdrawal
      * @param assets Amount of underlying to withdraw
      * @return shares Amount of shares that would be burned
      */

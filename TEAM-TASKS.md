@@ -42,31 +42,43 @@ USER CLICKS "CREATE WALLET"
 
 ## Jackson (Contracts) - The Foundation
 
-Everything depends on your contracts. Here's what the team needs from you:
+> **STATUS: ✅ DEPLOYED TO BASE MAINNET (Dec 3, 2024)**
+>
+> See `contracts/DEPLOYMENTS.md` for all addresses.
 
-**Deliverables the team is waiting on:**
+### Deployed Contract Addresses
 
-1. **Factory address** - Once deployed, update `frontend/lib/constants.ts`
-2. **Factory ABI** - At minimum the `createAccount` function signature
-3. **AutoYieldModule address** - For the bundler to call rebalance/migrate
-4. **AutoYieldModule ABI** - Function signatures for rebalance, migrateStrategy, executeWithAutoYield
-5. **Session key public address baked into factory** - Bryce will generate this and give it to you
+| Contract | Address | Status |
+|----------|---------|--------|
+| **AutoYieldModule** | `0xdC5ec0628ff1c0063A2d2B13B3FbBD9431aE4a10` | ✅ Verified |
+| **MorphoAdapter** | `0x33fD350a1ecE1239B880B3b3f91eb39407A7eDf9` | ✅ Verified |
+| **AutopilotFactory** | `0xa508485E1F6990255B17063C5368BC02eACffa6f` | ⚠️ Needs Fix |
 
-**What you're building (from PRD):**
+### What's Working
 
-1. IYieldAdapter.sol - Interface
-2. MockYieldVault.sol - For testing
-3. MorphoAdapter.sol - ERC-4626 wrapper for Morpho vaults
-4. AutoYieldModule.sol - The brain (executeWithAutoYield, rebalance, migrateStrategy, sweepDustAndCompound)
-5. AutopilotFactory.sol - Deploys Kernel wallets with module pre-installed
-6. Session key registration - Factory registers the global automation key during wallet creation
+- ✅ AutoYieldModule responds correctly (`isModuleType(EXECUTOR) = true`)
+- ✅ MorphoAdapter points to correct vault (Moonwell Flagship USDC)
+- ✅ AutopilotFactory configured with correct module/adapter/threshold
+- ✅ Fork tests pass (16/16) against real Morpho vaults
+- ✅ Unit tests pass (17/17)
 
-**Dust sweeping note:** The `sweepDustAndCompound()` function in AutoYieldModule handles this. It:
-- Iterates through tracked dust tokens
-- Swaps each to the consolidation token (USDC) via DEX router
-- Deposits the consolidated amount into yield
+### Known Issue
 
-This is a "nice to have" for the demo. Get the core flow working first (deposit/withdraw/rebalance), then add dust sweeping if time permits. The backend already has dust token metadata in `dustService.ts`.
+⚠️ **Factory wallet creation is broken** - `factory.getAddress()` reverts when predicting wallet addresses. Root cause: `_buildInitData()` format doesn't match what ZeroDev Kernel Factory v3.1 expects.
+
+**Next step:** Debug the Kernel Factory integration and redeploy AutopilotFactory.
+
+### What Was Built
+
+| Contract | File | Description |
+|----------|------|-------------|
+| IYieldAdapter | `src/interfaces/IYieldAdapter.sol` | Simplified interface (1 adapter = 1 vault) |
+| MockYieldVault | `src/mocks/MockYieldVault.sol` | Test vault with `accrueYield()` |
+| MorphoAdapter | `src/adapters/MorphoAdapter.sol` | Wraps ERC-4626 Morpho vaults, holds shares internally |
+| AutoYieldModule | `src/AutoYieldModule.sol` | ERC-7579 executor with `rebalance()`, `migrateStrategy()`, `executeWithAutoYield()`, `flushToChecking()` |
+| AutopilotFactory | `src/AutopilotFactory.sol` | Deploys Kernel wallets with module pre-installed |
+
+**Dust sweeping:** Not implemented (stretch goal). Core flow works first.
 
 ---
 
