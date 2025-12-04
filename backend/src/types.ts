@@ -236,6 +236,7 @@ export type RebalanceTaskResponse = {
  */
 export type SchedulerStatus = {
   isRunning: boolean;
+  bundlerEnabled: boolean;
   tickIntervalMs: number;
   taskCount: number;
   lastTickAt?: Date;
@@ -250,10 +251,11 @@ export type TaskExecutionResult = {
   success: boolean;
   strategyUsed?: string;
   strategyScore?: number;
+  adapterUsed?: string;
   message: string;
   timestamp: Date;
-  // TODO (B5): Add userOp hash when bundler integration is complete
-  // userOpHash?: string;
+  userOpHash?: string;
+  txHash?: string;
 };
 
 // ============================================================================
