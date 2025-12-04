@@ -28,25 +28,7 @@ Last Updated: December 4, 2024
 
 ## Outstanding Tasks
 
-### 1. Frontend: Update Contract Addresses
-**Priority:** High (Quick Win)
-**Status:** TODO
-**File:** `frontend/lib/constants.ts`
-
-Update to v2 deployment addresses:
-```typescript
-export const CONTRACTS = {
-  FACTORY: "0xcf10279BAA0d5407Dbb637517d23055A55E72923",
-  MODULE: "0x71b5A4663A49FF02BE672Ea9560256D2268727B7",
-  VALIDATOR: "0xe29ed376a2780f653C14EEC203eD25094c0E772A",
-  ADAPTER: "0x42EFecD83447e5b90c5F706309FaC8f9615bd68F",
-  USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-} as const;
-```
-
----
-
-### 2. Backend: Real UserOp Submission (B5)
+### 1. Backend: Real UserOp Submission (B5)
 **Priority:** High
 **Status:** In Progress (branch work)
 **File:** `backend/src/scheduler.ts` (line ~290)
@@ -189,6 +171,7 @@ const yieldBalance = await publicClient.readContract({
 - [x] Railway backend deployment
 - [x] Wallet registry setup
 - [x] Frontend UI (landing, dashboard, send, settings pages)
+- [x] Frontend: Update contract addresses to v2
 
 ---
 

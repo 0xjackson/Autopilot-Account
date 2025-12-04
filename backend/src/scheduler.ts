@@ -19,6 +19,13 @@ import {
   DataSource,
 } from "./types";
 import { getExecutableRecommendedStrategies, DEFAULTS } from "./strategyService";
+import {
+  checkWalletsForRebalance,
+  initChainReader,
+  formatUSDC,
+  WalletCheckResult,
+} from "./chainReader";
+import { getRegisteredWallets } from "./server";
 
 // ============================================================================
 // Configuration
@@ -26,6 +33,9 @@ import { getExecutableRecommendedStrategies, DEFAULTS } from "./strategyService"
 
 /** Default interval between scheduler ticks (30 seconds) */
 const DEFAULT_TICK_INTERVAL_MS = 30 * 1000;
+
+/** Default interval for registry wallet checks (10 seconds for demo) */
+const DEFAULT_REGISTRY_CHECK_INTERVAL_MS = 10 * 1000;
 
 /** Default interval between task runs (5 minutes) */
 const DEFAULT_TASK_INTERVAL_MS = 5 * 60 * 1000;
@@ -51,6 +61,18 @@ let lastTickAt: Date | undefined;
 
 /** Current tick interval */
 let tickIntervalMs = DEFAULT_TICK_INTERVAL_MS;
+
+/** Registry check interval handle */
+let registryCheckInterval: NodeJS.Timeout | null = null;
+
+/** Current registry check interval */
+let registryCheckIntervalMs = DEFAULT_REGISTRY_CHECK_INTERVAL_MS;
+
+/** Timestamp of last registry check */
+let lastRegistryCheckAt: Date | undefined;
+
+/** Whether chain reader is initialized */
+let chainReaderInitialized = false;
 
 // ============================================================================
 // Utility functions
@@ -381,27 +403,112 @@ async function schedulerTick(): Promise<void> {
   }
 }
 
+// ============================================================================
+// Registry wallet checking (B6)
+// ============================================================================
+
+/**
+ * Check all registered wallets for rebalance needs
+ *
+ * This runs on a separate interval from task-based scheduling.
+ * It reads on-chain state via multicall and logs which wallets need rebalancing.
+ */
+async function checkRegistryWallets(): Promise<void> {
+  if (!chainReaderInitialized) {
+    return;
+  }
+
+  const now = new Date();
+  lastRegistryCheckAt = now;
+
+  const wallets = getRegisteredWallets();
+
+  if (wallets.length === 0) {
+    return;
+  }
+
+  log("registry", `Checking ${wallets.length} registered wallet(s) for rebalance`);
+
+  try {
+    const results = await checkWalletsForRebalance(wallets);
+
+    const needsRebalance = results.filter((r) => r.needsRebalance);
+
+    if (needsRebalance.length > 0) {
+      log("registry", `Found ${needsRebalance.length} wallet(s) needing rebalance:`);
+
+      for (const result of needsRebalance) {
+        const shortWallet = `${result.wallet.substring(0, 6)}...${result.wallet.substring(38)}`;
+        log(
+          "registry",
+          `  ${shortWallet}: balance=${formatUSDC(result.checkingBalance)} USDC, ` +
+          `threshold=${formatUSDC(result.threshold)} USDC, ` +
+          `surplus=${formatUSDC(result.surplus)} USDC`
+        );
+
+        // TODO (B5): Submit rebalance userOp here
+        // await submitRebalanceUserOp(result.wallet, result.surplus);
+        log("registry", `  [SIMULATED] Would submit rebalance userOp for ${shortWallet}`);
+      }
+    } else {
+      // Only log occasionally to avoid spam
+      log("registry", `All ${wallets.length} wallet(s) balanced (no action needed)`);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log("registry", `ERROR checking wallets: ${errorMessage}`);
+  }
+}
+
 /**
  * Start the scheduler
+ *
+ * @param options.tickIntervalMs - Interval for task-based scheduling (default 30s)
+ * @param options.registryCheckIntervalMs - Interval for registry wallet checks (default 10s)
+ * @param options.rpcUrl - RPC URL for chain reader (required for registry checks)
  */
-export function startScheduler(intervalMs?: number): void {
+export function startScheduler(options?: {
+  tickIntervalMs?: number;
+  registryCheckIntervalMs?: number;
+  rpcUrl?: string;
+}): void {
   if (isRunning) {
     log("start", "Scheduler already running");
     return;
   }
 
-  tickIntervalMs = intervalMs || DEFAULT_TICK_INTERVAL_MS;
+  tickIntervalMs = options?.tickIntervalMs || DEFAULT_TICK_INTERVAL_MS;
+  registryCheckIntervalMs = options?.registryCheckIntervalMs || DEFAULT_REGISTRY_CHECK_INTERVAL_MS;
   isRunning = true;
 
-  log("start", `Scheduler started (tick interval: ${tickIntervalMs / 1000}s)`);
+  log("start", `Scheduler started (task tick: ${tickIntervalMs / 1000}s, registry check: ${registryCheckIntervalMs / 1000}s)`);
+
+  // Initialize chain reader if RPC URL provided
+  if (options?.rpcUrl) {
+    initChainReader({ rpcUrl: options.rpcUrl });
+    chainReaderInitialized = true;
+    log("start", "Chain reader initialized for registry wallet checks");
+  } else {
+    log("start", "No RPC URL provided - registry wallet checks disabled");
+  }
 
   // Run first tick immediately
   schedulerTick();
 
-  // Set up interval for subsequent ticks
+  // Set up interval for task-based scheduling
   schedulerInterval = setInterval(() => {
     schedulerTick();
   }, tickIntervalMs);
+
+  // Set up separate interval for registry wallet checks (if chain reader initialized)
+  if (chainReaderInitialized) {
+    // Run first registry check immediately
+    checkRegistryWallets();
+
+    registryCheckInterval = setInterval(() => {
+      checkRegistryWallets();
+    }, registryCheckIntervalMs);
+  }
 }
 
 /**
@@ -418,20 +525,33 @@ export function stopScheduler(): void {
     schedulerInterval = null;
   }
 
+  if (registryCheckInterval) {
+    clearInterval(registryCheckInterval);
+    registryCheckInterval = null;
+  }
+
   isRunning = false;
+  chainReaderInitialized = false;
   log("stop", "Scheduler stopped");
 }
 
 /**
  * Get scheduler status
  */
-export function getSchedulerStatus(): SchedulerStatus {
+export function getSchedulerStatus(): SchedulerStatus & {
+  registryCheckIntervalMs: number;
+  lastRegistryCheckAt?: Date;
+  chainReaderInitialized: boolean;
+} {
   return {
     isRunning,
     tickIntervalMs,
     taskCount: tasks.size,
     lastTickAt,
     nextTickAt: lastTickAt ? new Date(lastTickAt.getTime() + tickIntervalMs) : undefined,
+    registryCheckIntervalMs,
+    lastRegistryCheckAt,
+    chainReaderInitialized,
   };
 }
 

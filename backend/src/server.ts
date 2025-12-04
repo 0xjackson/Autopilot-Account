@@ -67,6 +67,21 @@ interface RegisteredWallet {
 
 const walletRegistry = new Map<string, RegisteredWallet>();
 
+/**
+ * Get all registered wallet addresses
+ * Used by scheduler to check wallets for rebalancing
+ */
+export function getRegisteredWallets(): string[] {
+  return Array.from(walletRegistry.keys());
+}
+
+/**
+ * Get count of registered wallets
+ */
+export function getRegisteredWalletCount(): number {
+  return walletRegistry.size;
+}
+
 // Middleware
 app.use(cors()); // Enable CORS for all origins
 app.use(express.json());
@@ -1008,8 +1023,18 @@ app.listen(PORT, () => {
 ╚═══════════════════════════════════════════════════════════╝
   `);
 
-  // Start the scheduler with 30-second tick interval
-  startScheduler(30 * 1000);
+  // Start the scheduler
+  const rpcUrl = process.env.BASE_RPC_URL;
+  startScheduler({
+    tickIntervalMs: 30 * 1000,           // Task-based scheduling: 30 seconds
+    registryCheckIntervalMs: 10 * 1000,  // Registry wallet checks: 10 seconds
+    rpcUrl,                               // For on-chain reads (optional)
+  });
+
+  if (!rpcUrl) {
+    console.log("⚠️  BASE_RPC_URL not set - registry wallet checks disabled");
+    console.log("   Set BASE_RPC_URL to enable automatic rebalance detection");
+  }
 });
 
 // Graceful shutdown
