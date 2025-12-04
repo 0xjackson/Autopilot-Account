@@ -1,123 +1,78 @@
-## AutoYield Backend Progress
+# Autopilot Backend
 
-This backend implements the Bryce tickets from the PRD in sequence. Each feature layers on top of the previous one so Logan and Robby can already integrate with it.
+Backend service for the Autopilot Wallet, deployed on Railway.
 
-### Ticket B1 – Index protocols with highest yield
-- Hardcoded strategy catalog for Base (mainnet + Sepolia test values) with mocked APYs, protocol names, risk tiers.
-- REST endpoints: `GET /health`, `GET /strategies`, `GET /recommend`.
-- Service layer (`strategyService.ts`) sorts/filter strategies and exposes helper utilities for future modules.
+## Features
 
-### Ticket B2 – Strategy selector (risk + preferences)
-- Introduced recommendation logic that accepts `riskTolerance` and `minApy` preferences.
-- Added `/recommendations` endpoint returning both the best strategy and a scored list.
-- Added scored strategy types plus helpers to parse/validate query params.
+### Completed (B1-B4)
 
-### Ticket B3 – Auto-rebalance scheduler
-- Added `scheduler.ts` to register periodic tasks that simulate rebalance userOps.
-- New endpoints under `/rebalance-tasks` allow listing, creating, deleting, and manually running tasks.
-- Scheduler uses the recommendation service to pick strategies per task, logs simulated runs, and keeps in-memory status (future tickets will swap in bundler calls + persistence).
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Strategy Indexer** | Live yield data from Morpho/Aave/Moonwell APIs | Done |
+| **Recommendation Engine** | Risk-based strategy selection | Done |
+| **Scheduler** | Task framework for periodic rebalancing | Done (simulated) |
+| **Dust Token Service** | 90+ token metadata catalog | Done |
+| **Wallet Registry** | Store registered wallets for automation | Done |
 
-### Ticket B4 – Dust token metadata service
-- Added `dustConfig.ts` with a registry of known tokens on Base (USDC, WETH, meme coins, airdrops).
-- Added `dustService.ts` with helper functions: `getDustTokens()`, `getDustConfig()`, `getDustSummary()`.
-- New endpoints:
-  - `GET /dust/tokens?chainId=8453` - List all dust token metadata for a chain
-  - `GET /dust/config?chainId=8453&consolidation=USDC` - Get dust sweep configuration
-  - `GET /dust/summary?wallet=0x...&chainId=8453` - Wallet dust summary (stub with mock data)
-- Tokens are categorized as:
-  - Consolidation targets (USDC, WETH) - tokens to sweep INTO
-  - Dust sources (DEGEN, AERO, etc.) - airdrop/meme tokens to sweep FROM
-  - Ignored tokens (known scams)
-- TODO hooks for real on-chain balance reading and DEX metadata (B5+).
+### In Progress (B5-B6)
 
-### Live Strategy Cache
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Real UserOp Submission** | Replace `[SIMULATED]` with bundler calls | In Progress |
+| **Cron + Registry Integration** | Iterate registered wallets for auto-rebalance | TODO |
 
-The backend includes a caching layer (`liveStrategyStore.ts`) for live yield vault data fetched from Morpho, Aave, and Moonwell APIs via `yieldAggregator.ts`.
+## API Endpoints
 
-**Cache behavior:**
-- **TTL:** 5 minutes per chain
-- **Auto-refresh:** Stale cache triggers automatic refresh on access
-- **Data sources:**
-  - Morpho Blue GraphQL API
-  - Aave V3 GraphQL API
-  - Moonwell SDK (Base native)
-- **Minimum TVL filter:** 100k USD (filters out small/test vaults)
-- **Fallback:** If live fetch fails or returns empty, falls back to mock data
+### Health
+- `GET /health` - Service health check
 
-**Response metadata:**
-All strategy endpoints (`/strategies`, `/recommend`, `/recommendations`) include a `metadata` field:
-```json
-{
-  "metadata": {
-    "dataSource": "live",
-    "fetchedAt": "2025-12-03T22:14:32.630Z",
-    "expiresAt": "2025-12-03T22:19:32.630Z"
-  }
-}
-```
-- `dataSource: "live"` - Real-time data from protocol APIs
-- `dataSource: "mock"` - Fallback static data (e.g., for unsupported tokens like WETH)
+### Strategies
+- `GET /strategies?token=USDC&chainId=8453` - List yield strategies
+- `GET /recommend?token=USDC` - Get top strategy recommendation
+- `GET /recommendations?token=USDC&riskTolerance=medium` - Scored recommendations
 
-**Admin endpoints:**
-- `POST /admin/refresh-strategies` - Force refresh the strategy cache
-  - Body: `{ "chainId": 8453 }` (optional, defaults to Base mainnet)
-  - Returns: `{ chainId, fetchedAt, expiresAt, count }`
-- `GET /admin/cache-status?chainId=8453` - Check current cache status
-  - Returns: `{ chainId, cached, isFresh, expiresAt, strategyCount }`
+### Rebalance Tasks
+- `GET /rebalance-tasks` - List scheduled tasks
+- `POST /rebalance-tasks` - Create new task
+- `DELETE /rebalance-tasks/:id` - Remove task
+- `POST /rebalance-tasks/:id/run` - Manually trigger task
 
-### Adapter Addresses
+### Dust
+- `GET /dust/tokens?chainId=8453` - List dust token metadata
+- `GET /dust/config?chainId=8453` - Get dust sweep config
+- `GET /dust/summary?wallet=0x...` - Wallet dust summary (mock)
 
-Each strategy includes an `adapterAddress` field pointing to the IYieldAdapter contract that wraps that protocol's vault. The adapter implements:
-```solidity
-interface IYieldAdapter {
-    function deposit(uint256 amount) external;
-    function withdraw(uint256 amount) external returns (uint256 withdrawn);
-    function totalValue() external view returns (uint256);
-}
+### Wallet Registry
+- `POST /wallets/register` - Register wallet for automation
+- `GET /wallets` - List registered wallets
+
+### Admin
+- `POST /admin/refresh-strategies` - Force cache refresh
+- `GET /admin/cache-status?chainId=8453` - Check cache status
+
+## Environment Variables
+
+```env
+PORT=3001
+NODE_ENV=production
+
+# Contract addresses (v2 deployment)
+FACTORY_ADDRESS=0xcf10279BAA0d5407Dbb637517d23055A55E72923
+MODULE_ADDRESS=0x71b5A4663A49FF02BE672Ea9560256D2268727B7
+ADAPTER_ADDRESS=0x42EFecD83447e5b90c5F706309FaC8f9615bd68F
+
+# Automation (for B5)
+AUTOMATION_PRIVATE_KEY=0x...
+CDP_API_KEY=your_cdp_api_key
 ```
 
-**Current status:** Adapter addresses are **placeholders** (e.g., `0xAdapterMorphoUSDC...`) until real adapters are deployed on-chain. The mapping is in `src/config/adapterAddresses.ts`.
+## Development
 
-**Supported adapters (placeholder):**
-| Protocol | Asset | Adapter Address (placeholder) |
-|----------|-------|-------------------------------|
-| Morpho | USDC | `0xAdapterMorphoUSDC0000000000000000000001` |
-| Aave | USDC | `0xAdapterAaveUSDC00000000000000000000003` |
-| Moonwell | USDC | `0xAdapterMoonwellUSDC000000000000000005` |
-| Morpho | WETH | `0xAdapterMorphoWETH0000000000000000000002` |
-| Aave | WETH | `0xAdapterAaveWETH00000000000000000000004` |
-| Moonwell | WETH | `0xAdapterMoonwellWETH000000000000000006` |
-
-**Example response with adapter:**
-```json
-{
-  "id": "morpho-edgeusdc-8453",
-  "protocolName": "Morpho",
-  "vaultAddress": "0x5435BC53f2C61298167cdB11Cdf0Db2BFa259ca0",
-  "adapterAddress": "0xAdapterMorphoUSDC0000000000000000000001",
-  "apy": 0.0697,
-  "riskTier": "med"
-}
+```bash
+npm install
+npm run dev  # Runs on :3001
 ```
 
-### Usage in Code
+## Deployment
 
-```typescript
-import { getCachedStrategies, refreshLiveStrategies } from "./liveStrategyStore";
-
-// Get cached data (auto-refreshes if stale)
-const result = await getCachedStrategies(8453);
-
-// Force refresh
-const fresh = await refreshLiveStrategies(8453);
-```
-
----
-
-## Next Steps
-
-The backend is ready for:
-- **Ticket B5 (Bundler integration):** Compose userOps using strategy/adapter data
-- **Ticket B6 (Paymaster server):** Sponsor gas for wallet operations
-
-Once real adapters are deployed, update `src/config/adapterAddresses.ts` with actual contract addresses.
+Deployed on Railway at: https://your-railway-url.up.railway.app
