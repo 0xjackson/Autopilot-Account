@@ -1,298 +1,192 @@
-import {
-  type Address,
-  type Hex,
-  encodeFunctionData,
-  keccak256,
-  concat,
-  toHex,
-  pad,
-  createPublicClient,
-  http,
-} from "viem";
-import { baseSepolia } from "viem/chains";
-import {
-  CONTRACTS,
-  FACTORY_ADDRESS,
-  FACTORY_ABI,
-  CHAIN_CONFIG,
-  isFactoryReady,
-} from "@/lib/constants";
+import { type Address, createPublicClient, http, keccak256, toBytes } from "viem";
+import { baseSepolia } from "viem/chains"; // Use base for mainnet
+import { CONTRACTS, FACTORY_ABI, API_URL } from "../constants";
 
-/**
- * Public client for read operations
- */
-const publicClient = createPublicClient({
-  chain: baseSepolia,
-  transport: http(CHAIN_CONFIG.RPC_URL),
-});
+// =============================================================================
+// Types
+// =============================================================================
 
-/**
- * Wallet creation response from the factory
- */
 export interface CreateWalletResponse {
   smartAccountAddress: Address;
   transactionHash: string;
 }
 
-/**
- * Wallet creation configuration
- */
 export interface CreateWalletConfig {
   owner: Address;
-  initialCheckingThreshold?: bigint;
+}
+
+// =============================================================================
+// Viem Client
+// =============================================================================
+
+const publicClient = createPublicClient({
+  chain: baseSepolia, // Change to `base` for mainnet
+  transport: http(),
+});
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Generate a deterministic salt from the owner address
+ * This ensures the same owner always gets the same wallet address
+ */
+function generateSalt(owner: Address): `0x${string}` {
+  return keccak256(toBytes(owner));
 }
 
 /**
- * Result of preparing a smart wallet creation transaction
+ * Fetch the automation session key from the backend
  */
-export interface PreparedSmartWalletTx {
-  /** The predicted counterfactual address of the smart wallet */
-  predictedAddress: Address;
-  /** The salt used for deterministic deployment */
-  salt: Hex;
-  /** The transaction request ready to be submitted */
-  txRequest: {
-    to: Address;
-    data: Hex;
-  };
-  /** Whether the factory contract is deployed and ready */
-  isFactoryReady: boolean;
-}
-
-/**
- * Generate a deterministic salt from owner address
- * Uses a simple approach: keccak256(owner + nonce)
- * The nonce of 0 means first wallet for this owner
- *
- * @param owner - The EOA owner address
- * @param nonce - Optional nonce for multiple wallets (default: 0)
- * @returns A bytes32 salt value
- */
-export function generateSalt(owner: Address, nonce: number = 0): Hex {
-  const packed = concat([owner as Hex, pad(toHex(nonce), { size: 32 })]);
-  return keccak256(packed);
-}
-
-/**
- * Predict the counterfactual smart wallet address
- * This uses CREATE2 address derivation based on factory + salt + initCodeHash
- *
- * @param owner - The EOA owner address
- * @param salt - The salt for deterministic deployment
- * @returns The predicted smart wallet address
- */
-export async function predictSmartWalletAddress(
-  owner: Address,
-  salt: Hex
-): Promise<Address> {
-  // If factory is not deployed, return a mock address for development
-  if (!isFactoryReady() || !FACTORY_ADDRESS || !FACTORY_ABI) {
-    console.log(
-      "[DEV] Factory not deployed, generating mock counterfactual address"
-    );
-    // Generate a deterministic mock address based on owner and salt
-    const mockHash = keccak256(concat([owner as Hex, salt]));
-    return `0x${mockHash.slice(26)}` as Address;
-  }
-
-  // Call factory.getAddress(owner, salt) to get the counterfactual address
+async function getAutomationKey(): Promise<Address> {
   try {
-    const address = await publicClient.readContract({
-      address: FACTORY_ADDRESS,
-      abi: FACTORY_ABI,
-      functionName: "getAddress",
-      args: [owner, salt],
-    });
-    return address as Address;
+    const response = await fetch(`${API_URL}/automation-key`);
+    if (!response.ok) {
+      throw new Error("Failed to fetch automation key");
+    }
+    const data = await response.json();
+    return data.address as Address;
   } catch (error) {
-    console.error("Failed to predict address from factory:", error);
-    // Fallback to mock address
-    const mockHash = keccak256(concat([owner as Hex, salt]));
-    return `0x${mockHash.slice(26)}` as Address;
+    console.warn("Could not fetch automation key, using mock:", error);
+    // Mock address for development when backend isn't running
+    return "0x1234567890123456789012345678901234567890" as Address;
   }
 }
 
-/**
- * Prepare the smart wallet creation transaction
- *
- * This function:
- * 1. Generates a deterministic salt from the owner address
- * 2. Predicts the counterfactual smart wallet address
- * 3. Prepares the transaction call for the factory's createAccountFor function
- * 4. Returns the predicted address and transaction request
- *
- * NOTE: This does NOT execute the transaction - it only prepares the data.
- * The actual transaction should be submitted using wagmi's writeContract.
- *
- * @param owner - The EOA address that will own the smart wallet
- * @returns PreparedSmartWalletTx with predicted address and tx request
- */
-export async function createSmartWallet(
-  owner: Address
-): Promise<PreparedSmartWalletTx> {
-  // Step 1: Generate salt
-  const salt = generateSalt(owner, 0);
-  console.log("[Wallet] Generated salt:", salt);
-
-  // Step 2: Predict counterfactual address
-  const predictedAddress = await predictSmartWalletAddress(owner, salt);
-  console.log("[Wallet] Predicted smart wallet address:", predictedAddress);
-
-  // Step 3: Check if factory is ready
-  const factoryReady = isFactoryReady();
-
-  // Step 4: Prepare transaction data (even if factory not deployed, for testing)
-  const factoryAbi = FACTORY_ABI ?? [
-    {
-      name: "createAccountFor",
-      type: "function",
-      stateMutability: "nonpayable",
-      inputs: [
-        { name: "owner", type: "address" },
-        { name: "salt", type: "bytes32" },
-      ],
-      outputs: [{ name: "account", type: "address" }],
-    },
-  ];
-
-  const data = encodeFunctionData({
-    abi: factoryAbi,
-    functionName: "createAccountFor",
-    args: [owner, salt],
-  });
-
-  console.log("[Wallet] Encoded createAccountFor calldata:", data);
-
-  // Step 5: Build transaction request
-  const txRequest = {
-    to: FACTORY_ADDRESS ?? CONTRACTS.FACTORY,
-    data,
-  };
-
-  console.log("[Wallet] Transaction request prepared:", {
-    to: txRequest.to,
-    dataLength: txRequest.data.length,
-    isFactoryReady: factoryReady,
-  });
-
-  return {
-    predictedAddress,
-    salt,
-    txRequest,
-    isFactoryReady: factoryReady,
-  };
-}
+// =============================================================================
+// Main Functions
+// =============================================================================
 
 /**
  * Check if a smart account already exists for an owner
- *
- * @param owner - The EOA address to check
- * @returns The smart account address if exists, null otherwise
  */
 export async function getExistingSmartAccount(
   owner: Address
 ): Promise<Address | null> {
-  // If factory is not deployed, return null
-  if (!isFactoryReady() || !FACTORY_ADDRESS || !FACTORY_ABI) {
-    console.log("[DEV] Factory not deployed, checking localStorage fallback");
-
-    // Check localStorage for previously created wallet
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("autopilotWalletAddress");
-      const storedOwner = localStorage.getItem("autopilotWalletOwner");
-      if (stored && storedOwner === owner) {
-        return stored as Address;
-      }
-    }
-    return null;
-  }
-
   try {
-    // Call factory.accountOf(owner) to check if account exists
-    const existingAddress = await publicClient.readContract({
-      address: FACTORY_ADDRESS,
+    const salt = generateSalt(owner);
+
+    // Get the counterfactual address
+    const predictedAddress = await publicClient.readContract({
+      address: CONTRACTS.FACTORY,
       abi: FACTORY_ABI,
-      functionName: "accountOf",
-      args: [owner],
+      functionName: "getAddress",
+      args: [owner, salt],
     });
 
-    // If address is zero, no account exists
-    if (
-      existingAddress === "0x0000000000000000000000000000000000000000" ||
-      !existingAddress
-    ) {
-      return null;
+    // Check if code exists at that address
+    const code = await publicClient.getBytecode({ address: predictedAddress });
+
+    if (code && code !== "0x") {
+      return predictedAddress;
     }
 
-    // Verify there's code at the address (account is deployed)
-    const code = await publicClient.getBytecode({
-      address: existingAddress as Address,
-    });
-
-    if (!code || code === "0x") {
-      return null;
-    }
-
-    return existingAddress as Address;
+    return null;
   } catch (error) {
-    console.error("Failed to check existing smart account:", error);
+    console.error("Error checking existing account:", error);
     return null;
   }
 }
 
 /**
- * Get the smart account address for an owner (counterfactual)
- * Does not deploy - just computes what the address would be
+ * Create a new Autopilot smart wallet
  *
- * @param owner - The EOA owner address
- * @returns The counterfactual smart account address
+ * This function is called after the user signs with their EOA.
+ * It calls the factory contract to deploy a new Kernel wallet
+ * with the AutoYieldModule pre-installed.
+ */
+export async function createSmartWallet(
+  config: CreateWalletConfig
+): Promise<CreateWalletResponse> {
+  const { owner } = config;
+
+  // Step 1: Get the automation key (for now this is mocked)
+  const automationKey = await getAutomationKey();
+  console.log("[wallet] Using automation key:", automationKey);
+
+  // Step 2: Generate salt
+  const salt = generateSalt(owner);
+  console.log("[wallet] Generated salt:", salt);
+
+  // Step 3: Check if factory is deployed (is address non-zero?)
+  if (CONTRACTS.FACTORY === "0x0000000000000000000000000000000000000000") {
+    console.warn("[wallet] Factory not deployed yet, returning mock response");
+
+    // Return a mock response for development
+    // The "address" is deterministic based on owner so it's consistent
+    const mockAddress = `0x${owner.slice(2, 10).padEnd(40, "0")}` as Address;
+
+    // Save to localStorage
+    localStorage.setItem("autopilotWalletAddress", mockAddress);
+    localStorage.setItem("autopilotWalletOwner", owner);
+
+    return {
+      smartAccountAddress: mockAddress,
+      transactionHash: `0x${"0".repeat(64)}`,
+    };
+  }
+
+  // Step 4: Actually call the factory
+  // This requires the user to sign a transaction
+  // We use wagmi's writeContract in the component, not here
+  // This function is called AFTER the transaction is submitted
+
+  throw new Error(
+    "Real factory deployment not implemented yet. " +
+    "This will use wagmi's useWriteContract hook in the CreateWallet component."
+  );
+}
+
+/**
+ * Get the counterfactual address for an owner
+ * Does not deploy, just computes what the address would be
  */
 export async function getSmartAccountAddress(owner: Address): Promise<Address> {
-  const salt = generateSalt(owner, 0);
-  return predictSmartWalletAddress(owner, salt);
-}
-
-/**
- * Check if a smart account is deployed
- *
- * @param address - The smart account address to check
- * @returns True if deployed, false otherwise
- */
-export async function isSmartAccountDeployed(
-  address: Address
-): Promise<boolean> {
-  try {
-    const code = await publicClient.getBytecode({ address });
-    return code !== undefined && code !== "0x";
-  } catch (error) {
-    console.error("Failed to check deployment status:", error);
-    return false;
+  if (CONTRACTS.FACTORY === "0x0000000000000000000000000000000000000000") {
+    // Mock: return deterministic address
+    return `0x${owner.slice(2, 10).padEnd(40, "0")}` as Address;
   }
+
+  const salt = generateSalt(owner);
+
+  return await publicClient.readContract({
+    address: CONTRACTS.FACTORY,
+    abi: FACTORY_ABI,
+    functionName: "getAddress",
+    args: [owner, salt],
+  });
 }
 
 /**
- * Mock session key registration with backend
- * This will be replaced with actual backend API call
- *
- * @param smartAccountAddress - The smart account address
- * @param ownerAddress - The owner EOA address
- * @returns Promise resolving to success status
+ * Load saved wallet from localStorage
  */
-export async function registerSessionKey(
-  smartAccountAddress: Address,
-  ownerAddress: Address
-): Promise<{ success: boolean; sessionKeyAddress?: Address }> {
-  console.log("[Mock] Registering session key for:", {
-    smartAccountAddress,
-    ownerAddress,
-  });
+export function getSavedWallet(): { address: Address; owner: Address } | null {
+  const address = localStorage.getItem("autopilotWalletAddress");
+  const owner = localStorage.getItem("autopilotWalletOwner");
 
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  if (address && owner) {
+    return {
+      address: address as Address,
+      owner: owner as Address,
+    };
+  }
 
-  // Return mock response
-  return {
-    success: true,
-    sessionKeyAddress: "0x1234567890123456789012345678901234567890" as Address,
-  };
+  return null;
+}
+
+/**
+ * Save wallet to localStorage
+ */
+export function saveWallet(address: Address, owner: Address): void {
+  localStorage.setItem("autopilotWalletAddress", address);
+  localStorage.setItem("autopilotWalletOwner", owner);
+}
+
+/**
+ * Clear saved wallet from localStorage
+ */
+export function clearSavedWallet(): void {
+  localStorage.removeItem("autopilotWalletAddress");
+  localStorage.removeItem("autopilotWalletOwner");
 }

@@ -2,14 +2,15 @@
 
 import { useState, useCallback } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { type Address, type Hex } from "viem";
+import { type Address, keccak256, toBytes } from "viem";
 import {
   createSmartWallet,
   getExistingSmartAccount,
-  registerSessionKey,
-  type PreparedSmartWalletTx,
+  getSmartAccountAddress,
+  saveWallet,
 } from "@/lib/services/wallet";
 import {
+  CONTRACTS,
   FACTORY_ABI,
   isFactoryReady,
 } from "@/lib/constants";
@@ -29,8 +30,8 @@ export interface WalletCreationState {
   smartAccountAddress: Address | null;
   transactionHash: string | null;
   error: string | null;
-  /** The prepared transaction data (available after 'preparing' step) */
-  preparedTx: PreparedSmartWalletTx | null;
+  /** The predicted address (available after 'preparing' step) */
+  predictedAddress: Address | null;
 }
 
 export interface UseWalletCreationReturn extends WalletCreationState {
@@ -40,6 +41,8 @@ export interface UseWalletCreationReturn extends WalletCreationState {
   ownerAddress: Address | undefined;
   /** Whether the factory contract is deployed */
   isFactoryDeployed: boolean;
+  /** Prepared transaction data for display */
+  preparedTx: { predictedAddress: Address } | null;
 }
 
 const initialState: WalletCreationState = {
@@ -47,8 +50,15 @@ const initialState: WalletCreationState = {
   smartAccountAddress: null,
   transactionHash: null,
   error: null,
-  preparedTx: null,
+  predictedAddress: null,
 };
+
+/**
+ * Generate a deterministic salt from the owner address
+ */
+function generateSalt(owner: Address): `0x${string}` {
+  return keccak256(toBytes(owner));
+}
 
 /**
  * Hook for managing smart wallet creation flow
@@ -71,7 +81,6 @@ export function useWalletCreation(): UseWalletCreationReturn {
   const {
     writeContract,
     data: txHash,
-    isPending: isWritePending,
     error: writeError,
     reset: resetWrite,
   } = useWriteContract();
@@ -116,85 +125,71 @@ export function useWalletCreation(): UseWalletCreationReturn {
           smartAccountAddress: existingAccount,
           transactionHash: null,
           error: null,
-          preparedTx: null,
+          predictedAddress: existingAccount,
         });
         return;
       }
 
-      // Step 2: Call backend session-key endpoint (mock for now)
+      // Step 2: Prepare wallet creation
       setState((prev) => ({
         ...prev,
         status: "preparing",
       }));
 
-      // This will be replaced with actual backend call
-      console.log("[WalletCreation] Step 2: Calling session-key endpoint (mock)");
+      console.log("[WalletCreation] Step 2: Preparing wallet creation");
 
-      // Step 3: Prepare the wallet creation transaction
-      const preparedTx = await createSmartWallet(ownerAddress);
-
-      console.log("[WalletCreation] Step 3: Transaction prepared:", {
-        predictedAddress: preparedTx.predictedAddress,
-        salt: preparedTx.salt,
-        isFactoryReady: preparedTx.isFactoryReady,
-      });
-
-      // Step 4: Log the txRequest for debugging
-      console.log("[WalletCreation] Step 4: Transaction request:", preparedTx.txRequest);
+      // Get the predicted address
+      const predictedAddress = await getSmartAccountAddress(ownerAddress);
+      console.log("[WalletCreation] Predicted address:", predictedAddress);
 
       setState((prev) => ({
         ...prev,
-        preparedTx,
+        predictedAddress,
       }));
 
-      // Step 5: If factory is deployed, submit the transaction
-      if (preparedTx.isFactoryReady && FACTORY_ABI) {
+      // Step 3: Check if factory is deployed
+      if (isFactoryReady()) {
         setState((prev) => ({
           ...prev,
           status: "creating",
         }));
 
-        console.log("[WalletCreation] Step 5: Submitting transaction to factory");
+        console.log("[WalletCreation] Step 3: Submitting transaction to factory");
+
+        const salt = generateSalt(ownerAddress);
 
         // Submit the actual transaction
         writeContract({
-          address: preparedTx.txRequest.to,
+          address: CONTRACTS.FACTORY,
           abi: FACTORY_ABI,
-          functionName: "createAccountFor",
-          args: [ownerAddress, preparedTx.salt as Hex],
+          functionName: "createAccount",
+          args: [ownerAddress, salt],
         });
 
         // The rest of the flow will be handled by the transaction confirmation
-        // which triggers the success state via useEffect in the component
       } else {
-        // Factory not deployed - simulate success for development
-        console.log("[WalletCreation] Factory not deployed, simulating success");
+        // Factory not deployed - use mock mode
+        console.log("[WalletCreation] Factory not deployed, using mock mode");
 
         // Simulate network delay
         await new Promise((resolve) => setTimeout(resolve, 1500));
 
-        // Step 6: Register session key with backend (mock)
+        // Step 4: Register session key with backend (mock)
         setState((prev) => ({
           ...prev,
           status: "registering",
         }));
 
-        await registerSessionKey(preparedTx.predictedAddress, ownerAddress);
-        console.log("[WalletCreation] Step 6: Session key registered (mock)");
-
-        // Step 7: Save to localStorage
-        if (typeof window !== "undefined") {
-          localStorage.setItem("autopilotWalletAddress", preparedTx.predictedAddress);
-          localStorage.setItem("autopilotWalletOwner", ownerAddress);
-        }
-        console.log("[WalletCreation] Step 7: Saved to localStorage");
+        // Use the createSmartWallet function which handles mock mode
+        const result = await createSmartWallet({ owner: ownerAddress });
+        console.log("[WalletCreation] Mock wallet created:", result);
 
         setState({
           status: "success",
-          smartAccountAddress: preparedTx.predictedAddress,
-          transactionHash: null, // No real tx in mock mode
+          smartAccountAddress: result.smartAccountAddress,
+          transactionHash: result.transactionHash,
           error: null,
-          preparedTx,
+          predictedAddress: result.smartAccountAddress,
         });
       }
     } catch (err) {
@@ -232,27 +227,21 @@ export function useWalletCreation(): UseWalletCreationReturn {
   }
 
   // Handle transaction confirmation
-  if (isConfirmed && txHash && state.preparedTx && state.status !== "success") {
+  if (isConfirmed && txHash && state.predictedAddress && state.status !== "success") {
     console.log("[WalletCreation] Transaction confirmed:", txHash);
 
     // Save to localStorage
     if (typeof window !== "undefined" && ownerAddress) {
-      localStorage.setItem("autopilotWalletAddress", state.preparedTx.predictedAddress);
-      localStorage.setItem("autopilotWalletOwner", ownerAddress);
+      saveWallet(state.predictedAddress, ownerAddress);
     }
 
     setState({
       status: "success",
-      smartAccountAddress: state.preparedTx.predictedAddress,
+      smartAccountAddress: state.predictedAddress,
       transactionHash: txHash,
       error: null,
-      preparedTx: state.preparedTx,
+      predictedAddress: state.predictedAddress,
     });
-  }
-
-  // Update status based on write pending state
-  if (isWritePending && state.status === "creating") {
-    // Status is already "creating", no update needed
   }
 
   // Update status based on confirming state
@@ -271,5 +260,6 @@ export function useWalletCreation(): UseWalletCreationReturn {
     isConnected,
     ownerAddress,
     isFactoryDeployed: isFactoryReady(),
+    preparedTx: state.predictedAddress ? { predictedAddress: state.predictedAddress } : null,
   };
 }
