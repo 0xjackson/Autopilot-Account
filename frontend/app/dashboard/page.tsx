@@ -279,44 +279,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Strategy Info Section */}
-      {(currentStrategy || isLoadingStrategy) && (
-        <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <p className="text-gray-500 text-xs uppercase tracking-wide mb-1">Current Strategy</p>
-              {isLoadingStrategy ? (
-                <div className="h-6 w-32 bg-gray-100 rounded animate-pulse" />
-              ) : (
-                <p className="text-gray-900 font-medium">{currentStrategy?.name || "None"}</p>
-              )}
-            </div>
-            <div>
-              <p className="text-gray-500 text-xs uppercase tracking-wide mb-1">Current APY</p>
-              {isLoadingStrategy ? (
-                <div className="h-6 w-20 bg-gray-100 rounded animate-pulse" />
-              ) : (
-                <p className="text-green-600 font-medium">
-                  {currentStrategy ? `${(currentStrategy.apy * 100).toFixed(2)}%` : "—"}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-gray-500 text-xs uppercase tracking-wide mb-1">Vault</p>
-              {isLoadingStrategy ? (
-                <div className="h-6 w-40 bg-gray-100 rounded animate-pulse" />
-              ) : currentStrategy?.vaultAddress ? (
-                <p className="text-gray-800 font-mono text-sm">
-                  {currentStrategy.vaultAddress.slice(0, 10)}...{currentStrategy.vaultAddress.slice(-6)}
-                </p>
-              ) : (
-                <p className="text-gray-400">—</p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Dust Balances Section */}
       {smartWalletAddress && (
         <DustBalances
