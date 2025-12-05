@@ -7,7 +7,7 @@ import { base } from "viem/chains";
 
 const CONTRACTS = {
   USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
-  AUTO_YIELD_MODULE: "0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd" as Address,
+  AUTO_YIELD_MODULE: "0x598d23dC23095b128aBD4Dbab096d48f9e4b919B" as Address,
 };
 
 const ERC20_ABI = parseAbi([
