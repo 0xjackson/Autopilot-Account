@@ -10,8 +10,8 @@ Last Updated: December 5, 2024
 
 | Contract | Address | Description |
 |----------|---------|-------------|
-| **AutopilotFactory** | [`0xA5BC2a02C397F66fBCFC445457325F36106788d1`](https://basescan.org/address/0xA5BC2a02C397F66fBCFC445457325F36106788d1) | Factory v4 - direct vault integration |
-| **AutoYieldModule** | [`0x17a4F90C0042AaDE88aEC477b7277f35e315B4E5`](https://basescan.org/address/0x17a4F90C0042AaDE88aEC477b7277f35e315B4E5) | Module v5 - **executeFromExecutor fix** |
+| **AutopilotFactory** | [`0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94`](https://basescan.org/address/0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94) | Factory v5 - with fixed module |
+| **AutoYieldModule** | [`0x598d23dC23095b128aBD4Dbab096d48f9e4b919B`](https://basescan.org/address/0x598d23dC23095b128aBD4Dbab096d48f9e4b919B) | Module v5 - **executeFromExecutor fix** |
 | **AutomationValidator** | [`0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b`](https://basescan.org/address/0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b) | Reused from v3 |
 
 **v5 Fix:**
@@ -22,8 +22,8 @@ Last Updated: December 5, 2024
 **v5 Quick Copy-Paste:**
 ```typescript
 export const CONTRACTS = {
-  FACTORY: "0xA5BC2a02C397F66fBCFC445457325F36106788d1",
-  MODULE: "0x17a4F90C0042AaDE88aEC477b7277f35e315B4E5",
+  FACTORY: "0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94",
+  MODULE: "0x598d23dC23095b128aBD4Dbab096d48f9e4b919B",
   VALIDATOR: "0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b",
   USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 } as const;
@@ -95,8 +95,9 @@ AUTOMATION_PUBLIC_ADDRESS=0xD78F5099987389e33bD6Ec15FF3Ca4dBedD507f3
 - **Critical fix:** Changed `_executeOnKernel()` to use `executeFromExecutor()` instead of `execute()`
 - Root cause: When module called back into Kernel via `execute()`, it triggered root validator hooks
 - This caused "ECDSAValidator: sender is not owner" errors during UserOp simulation
-- AutoYieldModule v5: `0x17a4F90C0042AaDE88aEC477b7277f35e315B4E5`
-- Reuses Factory and AutomationValidator from v4
+- AutoYieldModule v5: `0x598d23dC23095b128aBD4Dbab096d48f9e4b919B`
+- AutopilotFactory v5: `0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94`
+- Reuses AutomationValidator from v3
 
 ### v4 - December 5, 2024 (DEPRECATED - buggy)
 - Direct ERC-4626 vault integration (removed adapter layer)
