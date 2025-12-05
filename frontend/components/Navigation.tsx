@@ -19,7 +19,6 @@ import {
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/send", label: "Send" },
   { href: "/settings", label: "Settings" },
 ];
 

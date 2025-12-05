@@ -37,7 +37,7 @@ const defaultSettings: WalletSettings = {
   dustSweepEnabled: true,
   dustThreshold: "1.00",
   riskTolerance: 3,
-  yieldStrategy: "morpho",
+  yieldStrategy: "mock",
 };
 
 const consolidationTokenOptions = [
@@ -46,13 +46,6 @@ const consolidationTokenOptions = [
   { value: "ETH", label: "ETH (Native Ether)" },
 ] as const;
 
-const yieldStrategyOptions = [
-  { value: "aerodrome", label: "Aerodrome USDC Vault", apy: "4.2%" },
-  { value: "beefy", label: "Beefy Finance Vault", apy: "3.8%" },
-  { value: "mock", label: "Mock Vault (Demo)", apy: "5.0%" },
-] as const;
-
-const riskLabels = ["Very Low", "Low", "Medium", "High", "Very High"];
 
 export function SettingsForm() {
   const [settings, setSettings] = useState<WalletSettings>(defaultSettings);
@@ -308,26 +301,9 @@ export function SettingsForm() {
             </label>
           </div>
 
-          {/* WETH Toggle */}
-          <div className="flex items-center justify-between py-2 border-t border-gray-800 pt-4">
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-xs font-bold">
-                W
-              </div>
-              <div>
-                <p className="font-medium">WETH</p>
-                <p className="text-gray-400 text-sm">Wrapped Ether</p>
-              </div>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={settings.autoYieldTokens.WETH.enabled}
-                onChange={(e) => updateTokenYield("WETH", e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-14 h-7 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
+          {/* More Coming Soon */}
+          <div className="border-t border-gray-800 pt-4">
+            <p className="text-gray-500 text-sm italic">More tokens coming soon...</p>
           </div>
         </CardContent>
       </Card>
@@ -407,78 +383,6 @@ export function SettingsForm() {
             </div>
           </CardContent>
         )}
-      </Card>
-
-      {/* Risk Tolerance Slider */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Risk Tolerance</CardTitle>
-          <CardDescription>
-            Adjust your preferred risk level for yield strategies
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <input
-              type="range"
-              min="1"
-              max="5"
-              value={settings.riskTolerance}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  riskTolerance: parseInt(e.target.value),
-                })
-              }
-              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
-            />
-            <div className="flex justify-between text-xs text-gray-400">
-              {riskLabels.map((label, index) => (
-                <span
-                  key={label}
-                  className={
-                    settings.riskTolerance === index + 1
-                      ? "text-blue-400 font-medium"
-                      : ""
-                  }
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-            <p className="text-center text-sm">
-              Current:{" "}
-              <span className="text-blue-400 font-medium">
-                {riskLabels[settings.riskTolerance - 1]}
-              </span>
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Yield Strategy Selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Yield Strategy</CardTitle>
-          <CardDescription>
-            Select which vault to use for yield generation
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <select
-            value={settings.yieldStrategy}
-            onChange={(e) =>
-              setSettings({ ...settings, yieldStrategy: e.target.value })
-            }
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
-          >
-            {yieldStrategyOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label} ({option.apy} APY)
-              </option>
-            ))}
-          </select>
-        </CardContent>
       </Card>
 
       {/* Action Buttons */}
