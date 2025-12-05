@@ -180,8 +180,8 @@ export function SettingsForm() {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-gray-400">Loading settings...</span>
+          <div className="w-8 h-8 border-2 border-[#4169E1] border-t-transparent rounded-full animate-spin" />
+          <span className="text-gray-600">Loading settings...</span>
         </div>
       </div>
     );
@@ -191,8 +191,8 @@ export function SettingsForm() {
   if (!isConnected) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-400 mb-4">Please connect your wallet to manage settings.</p>
-        <Button asChild>
+        <p className="text-gray-600 mb-4">Please connect your wallet to manage settings.</p>
+        <Button asChild className="bg-[#4169E1] hover:bg-[#4169E1]/90 text-white">
           <Link href="/">Connect Wallet</Link>
         </Button>
       </div>
@@ -244,16 +244,16 @@ export function SettingsForm() {
       )}
 
       {/* Checking Threshold */}
-      <Card>
+      <Card className="border-gray-200 shadow-sm bg-white">
         <CardHeader>
-          <CardTitle className="text-lg">Checking Threshold</CardTitle>
+          <CardTitle className="text-lg text-gray-900">Checking Threshold</CardTitle>
           <CardDescription>
             Minimum USDC to keep in checking. Excess is auto-deposited to yield.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center space-x-3">
-            <span className="text-gray-400">$</span>
+            <span className="text-gray-500">$</span>
             <input
               type="number"
               min="0"
@@ -262,17 +262,17 @@ export function SettingsForm() {
               onChange={(e) =>
                 setSettings({ ...settings, checkingThreshold: e.target.value })
               }
-              className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white w-32 focus:outline-none focus:border-blue-500"
+              className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-900 w-32 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1]"
             />
-            <span className="text-gray-400">USDC</span>
+            <span className="text-gray-500">USDC</span>
           </div>
         </CardContent>
       </Card>
 
       {/* Auto-Yield Token Toggles */}
-      <Card>
+      <Card className="border-gray-200 shadow-sm bg-white">
         <CardHeader>
-          <CardTitle className="text-lg">Auto-Yield Tokens</CardTitle>
+          <CardTitle className="text-lg text-gray-900">Auto-Yield Tokens</CardTitle>
           <CardDescription>
             Select which tokens should automatically earn yield when above your
             checking threshold.
@@ -282,12 +282,12 @@ export function SettingsForm() {
           {/* USDC Toggle */}
           <div className="flex items-center justify-between py-2">
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-xs font-bold">
+              <div className="w-8 h-8 bg-[#4169E1] rounded-full flex items-center justify-center text-xs font-bold text-white">
                 $
               </div>
               <div>
-                <p className="font-medium">USDC</p>
-                <p className="text-gray-400 text-sm">USD Coin</p>
+                <p className="font-medium text-gray-900">USDC</p>
+                <p className="text-gray-500 text-sm">USD Coin</p>
               </div>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -297,23 +297,23 @@ export function SettingsForm() {
                 onChange={(e) => updateTokenYield("USDC", e.target.checked)}
                 className="sr-only peer"
               />
-              <div className="w-14 h-7 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
+              <div className="w-14 h-7 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-[#4169E1]"></div>
             </label>
           </div>
 
           {/* More Coming Soon */}
-          <div className="border-t border-gray-800 pt-4">
+          <div className="border-t border-gray-200 pt-4">
             <p className="text-gray-500 text-sm italic">More tokens coming soon...</p>
           </div>
         </CardContent>
       </Card>
 
       {/* Dust Sweep Configuration */}
-      <Card>
+      <Card className="border-gray-200 shadow-sm bg-white">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-lg">Dust Sweep</CardTitle>
+              <CardTitle className="text-lg text-gray-900">Dust Sweep</CardTitle>
               <CardDescription>
                 Automatically consolidate small token balances
               </CardDescription>
@@ -327,15 +327,15 @@ export function SettingsForm() {
                 }
                 className="sr-only peer"
               />
-              <div className="w-14 h-7 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
+              <div className="w-14 h-7 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-[#4169E1]"></div>
             </label>
           </div>
         </CardHeader>
         {settings.dustSweepEnabled && (
-          <CardContent className="space-y-4 border-t border-gray-800 pt-4">
+          <CardContent className="space-y-4 border-t border-gray-200 pt-4">
             {/* Consolidation Token Dropdown */}
             <div>
-              <label className="text-gray-400 text-sm block mb-2">
+              <label className="text-gray-600 text-sm block mb-2">
                 Consolidation Token
               </label>
               <select
@@ -349,7 +349,7 @@ export function SettingsForm() {
                       | "ETH",
                   })
                 }
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded-lg px-4 py-3 text-gray-900 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1]"
               >
                 {consolidationTokenOptions.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -364,11 +364,11 @@ export function SettingsForm() {
 
             {/* Dust Threshold */}
             <div>
-              <label className="text-gray-400 text-sm block mb-2">
+              <label className="text-gray-600 text-sm block mb-2">
                 Dust Threshold (sweep tokens below this USD value)
               </label>
               <div className="flex items-center space-x-3">
-                <span className="text-gray-400">$</span>
+                <span className="text-gray-500">$</span>
                 <input
                   type="number"
                   min="0"
@@ -377,7 +377,7 @@ export function SettingsForm() {
                   onChange={(e) =>
                     setSettings({ ...settings, dustThreshold: e.target.value })
                   }
-                  className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white w-32 focus:outline-none focus:border-blue-500"
+                  className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-900 w-32 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1]"
                 />
               </div>
             </div>
@@ -390,12 +390,12 @@ export function SettingsForm() {
         <Button
           onClick={handleSave}
           disabled={isSaving}
-          className="flex-1"
+          className="flex-1 bg-[#4169E1] hover:bg-[#4169E1]/90 text-white"
           size="lg"
         >
           {isSaving ? "Saving..." : "Save Settings"}
         </Button>
-        <Button variant="outline" size="lg" asChild>
+        <Button variant="outline" size="lg" asChild className="border-gray-300 text-gray-700 hover:bg-gray-50">
           <Link href="/dashboard">Back to Dashboard</Link>
         </Button>
       </div>

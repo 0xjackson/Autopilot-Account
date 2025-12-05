@@ -10,35 +10,42 @@ interface FeatureCardProps {
   description: string;
   iconColor?: string;
   className?: string;
+  emoji?: string;
 }
 
 export function FeatureCard({
   icon,
   title,
   description,
-  iconColor = "text-blue-400",
+  iconColor = "text-[#4169E1]",
   className,
+  emoji,
 }: FeatureCardProps) {
   return (
     <Card
       className={cn(
         "group relative overflow-hidden",
-        "bg-gray-900/50 backdrop-blur-sm",
-        "border-gray-800 hover:border-gray-700",
-        "transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/5",
+        "bg-white",
+        "border-gray-200 hover:border-[#4169E1]/30",
+        "transition-all duration-300 hover:shadow-lg hover:shadow-[#4169E1]/10",
         "hover:-translate-y-1",
         className
       )}
     >
       {/* Hover gradient effect */}
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+      <div className="absolute inset-0 bg-gradient-to-br from-[#4169E1]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
 
       <CardContent className="relative p-6 space-y-4">
+        {/* Emoji visual */}
+        {emoji && (
+          <div className="text-4xl mb-2">{emoji}</div>
+        )}
+
         {/* Icon container */}
         <div
           className={cn(
             "w-12 h-12 rounded-xl flex items-center justify-center",
-            "bg-gray-800/80 border border-gray-700/50",
+            "bg-gray-50 border border-gray-200",
             "group-hover:scale-110 transition-transform duration-300",
             iconColor
           )}
@@ -48,10 +55,10 @@ export function FeatureCard({
 
         {/* Content */}
         <div className="space-y-2">
-          <h3 className="text-lg font-semibold text-white group-hover:text-blue-400 transition-colors duration-300">
+          <h3 className="text-lg font-semibold text-gray-900 group-hover:text-[#4169E1] transition-colors duration-300">
             {title}
           </h3>
-          <p className="text-sm text-gray-400 leading-relaxed">{description}</p>
+          <p className="text-sm text-gray-600 leading-relaxed">{description}</p>
         </div>
       </CardContent>
     </Card>

@@ -189,8 +189,8 @@ export default function DashboardPage() {
     return (
       <div className="min-h-[calc(100vh-12rem)] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-gray-400">Verifying wallet...</span>
+          <div className="w-8 h-8 border-2 border-[#4169E1] border-t-transparent rounded-full animate-spin" />
+          <span className="text-gray-600">Verifying wallet...</span>
         </div>
       </div>
     );
@@ -199,44 +199,44 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <div className="text-sm text-gray-400">
+        <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+        <div className="text-sm text-gray-500">
           Wallet: {smartWalletAddress?.slice(0, 6)}...{smartWalletAddress?.slice(-4)}
         </div>
       </div>
 
       {/* Balance Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-gray-900 rounded-lg p-6 border border-gray-800">
-          <p className="text-gray-400 text-sm">Checking Balance</p>
-          <p className="text-2xl font-bold mt-1">${formatUSDC(checkingBalance as bigint)}</p>
-          <p className="text-gray-500 text-xs mt-1">Available for spending</p>
+        <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
+          <p className="text-gray-500 text-sm">Checking Balance</p>
+          <p className="text-2xl font-bold mt-1 text-gray-900">${formatUSDC(checkingBalance as bigint)}</p>
+          <p className="text-gray-400 text-xs mt-1">Available for spending</p>
         </div>
 
-        <div className="bg-gray-900 rounded-lg p-6 border border-gray-800">
-          <p className="text-gray-400 text-sm">Yield Balance</p>
-          <p className="text-2xl font-bold mt-1 text-green-400">
+        <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
+          <p className="text-gray-500 text-sm">Yield Balance</p>
+          <p className="text-2xl font-bold mt-1 text-green-600">
             ${formatUSDC(yieldBalance as bigint)}
           </p>
-          <p className="text-gray-500 text-xs mt-1">
+          <p className="text-gray-400 text-xs mt-1">
             Earning yield automatically
           </p>
         </div>
 
-        <div className="bg-gray-900 rounded-lg p-6 border border-gray-800">
-          <p className="text-gray-400 text-sm">Total Balance</p>
-          <p className="text-2xl font-bold mt-1">${formatUSDC(totalBalance as bigint)}</p>
-          <p className="text-gray-500 text-xs mt-1">USDC</p>
+        <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
+          <p className="text-gray-500 text-sm">Total Balance</p>
+          <p className="text-2xl font-bold mt-1 text-gray-900">${formatUSDC(totalBalance as bigint)}</p>
+          <p className="text-gray-400 text-xs mt-1">USDC</p>
         </div>
       </div>
 
       {/* Send Section */}
-      <div className="bg-gray-900 rounded-xl p-6 border border-gray-800 space-y-6 shadow-xl">
-        <h2 className="text-lg font-semibold">Send USDC</h2>
+      <div className="bg-white rounded-xl p-6 border border-gray-200 space-y-6 shadow-lg">
+        <h2 className="text-lg font-semibold text-gray-900">Send USDC</h2>
 
         {/* Recipient Input */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
             Recipient Address
           </label>
           <div className="relative">
@@ -246,12 +246,12 @@ export default function DashboardPage() {
               onChange={(e) => setRecipient(e.target.value)}
               onBlur={() => setRecipientTouched(true)}
               placeholder="0x..."
-              className={`w-full bg-gray-800 border rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none transition-colors ${
+              className={`w-full bg-white border rounded-lg px-4 py-3 text-gray-900 placeholder-gray-400 focus:outline-none transition-colors ${
                 recipientError
                   ? "border-red-500 focus:border-red-500"
                   : recipientValid && recipient.length > 0
                   ? "border-green-500 focus:border-green-500"
-                  : "border-gray-700 focus:border-blue-500"
+                  : "border-gray-300 focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1]"
               }`}
             />
             {recipient.length > 0 && (
@@ -269,7 +269,7 @@ export default function DashboardPage() {
             )}
           </div>
           {recipientError && (
-            <p className="mt-2 text-sm text-red-400">
+            <p className="mt-2 text-sm text-red-500">
               Please enter a valid Ethereum address (0x followed by 40 hex characters)
             </p>
           )}
@@ -277,7 +277,7 @@ export default function DashboardPage() {
 
         {/* Amount Input */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
             Amount
           </label>
           <div className="relative">
@@ -288,25 +288,25 @@ export default function DashboardPage() {
               placeholder="0.00"
               min="0"
               step="0.01"
-              className={`w-full bg-gray-800 border rounded-lg px-4 py-3 pr-24 text-white placeholder-gray-500 focus:outline-none transition-colors ${
+              className={`w-full bg-white border rounded-lg px-4 py-3 pr-24 text-gray-900 placeholder-gray-400 focus:outline-none transition-colors ${
                 amountExceedsBalance
                   ? "border-red-500 focus:border-red-500"
-                  : "border-gray-700 focus:border-blue-500"
+                  : "border-gray-300 focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1]"
               }`}
             />
             <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
               <button
                 type="button"
                 onClick={handleMaxClick}
-                className="px-2 py-1 text-xs font-semibold text-blue-400 hover:text-blue-300 hover:bg-blue-900/30 rounded transition-colors"
+                className="px-2 py-1 text-xs font-semibold text-[#4169E1] hover:text-[#4169E1]/80 hover:bg-[#4169E1]/10 rounded transition-colors"
               >
                 MAX
               </button>
-              <span className="text-gray-400 text-sm">USDC</span>
+              <span className="text-gray-500 text-sm">USDC</span>
             </div>
           </div>
           {amountExceedsBalance && (
-            <p className="mt-2 text-sm text-red-400">
+            <p className="mt-2 text-sm text-red-500">
               Insufficient balance. Maximum available: ${totalNum.toLocaleString()}
             </p>
           )}
@@ -314,15 +314,15 @@ export default function DashboardPage() {
 
         {/* Preview Text */}
         {amountNum > 0 && !amountExceedsBalance && (
-          <div className="bg-blue-900/20 border border-blue-800/50 rounded-lg p-4">
+          <div className="bg-[#4169E1]/5 border border-[#4169E1]/20 rounded-lg p-4">
             <div className="flex items-start gap-3">
-              <svg className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 text-[#4169E1] mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <p className="text-blue-300 text-sm leading-relaxed">
-                You have <span className="font-semibold text-white">${checkingNum.toFixed(2)}</span> in checking.
+              <p className="text-gray-700 text-sm leading-relaxed">
+                You have <span className="font-semibold text-gray-900">${checkingNum.toFixed(2)}</span> in checking.
                 {yieldWithdrawAmount > 0 ? (
-                  <> This will withdraw <span className="font-semibold text-yellow-300">${yieldWithdrawAmount.toFixed(2)}</span> from yield to cover the transfer.</>
+                  <> This will withdraw <span className="font-semibold text-amber-600">${yieldWithdrawAmount.toFixed(2)}</span> from yield to cover the transfer.</>
                 ) : (
                   <> This transfer will be covered entirely from your checking balance.</>
                 )}
@@ -337,8 +337,8 @@ export default function DashboardPage() {
           disabled={!canSend}
           className={`w-full py-4 rounded-lg font-semibold text-lg transition-all flex items-center justify-center gap-2 ${
             canSend
-              ? "bg-blue-600 hover:bg-blue-500 active:bg-blue-700 shadow-lg hover:shadow-blue-500/25"
-              : "bg-gray-700 cursor-not-allowed text-gray-400"
+              ? "bg-[#4169E1] hover:bg-[#4169E1]/90 active:bg-[#4169E1] text-white shadow-lg hover:shadow-[#4169E1]/25"
+              : "bg-gray-200 cursor-not-allowed text-gray-400"
           }`}
         >
           {sendStatus === "loading" ? (
@@ -365,23 +365,23 @@ export default function DashboardPage() {
         <div
           className={`fixed bottom-6 right-6 px-6 py-4 rounded-lg shadow-2xl flex items-center gap-3 animate-slide-up ${
             toast.type === "success"
-              ? "bg-green-900 border border-green-700 text-green-100"
-              : "bg-red-900 border border-red-700 text-red-100"
+              ? "bg-green-50 border border-green-200 text-green-800"
+              : "bg-red-50 border border-red-200 text-red-800"
           }`}
         >
           {toast.type === "success" ? (
-            <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           ) : (
-            <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           )}
           <span className="font-medium">{toast.message}</span>
           <button
             onClick={() => setToast(null)}
-            className="ml-2 text-gray-300 hover:text-white transition-colors"
+            className="ml-2 text-gray-500 hover:text-gray-700 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -391,18 +391,18 @@ export default function DashboardPage() {
       )}
 
       {/* Wallet Address Section */}
-      <div className="bg-gray-900 rounded-lg p-6 border border-gray-800">
-        <h2 className="text-lg font-semibold mb-4">Wallet Details</h2>
+      <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
+        <h2 className="text-lg font-semibold mb-4 text-gray-900">Wallet Details</h2>
         <div className="space-y-3">
           <div className="flex items-center justify-between py-2">
-            <span className="text-gray-400">Smart Wallet Address</span>
-            <code className="text-sm bg-gray-800 px-3 py-1 rounded">
+            <span className="text-gray-600">Smart Wallet Address</span>
+            <code className="text-sm bg-gray-100 px-3 py-1 rounded text-gray-800">
               {smartWalletAddress}
             </code>
           </div>
           <div className="flex items-center justify-between py-2">
-            <span className="text-gray-400">Owner (EOA)</span>
-            <code className="text-sm bg-gray-800 px-3 py-1 rounded">
+            <span className="text-gray-600">Owner (EOA)</span>
+            <code className="text-sm bg-gray-100 px-3 py-1 rounded text-gray-800">
               {ownerAddress}
             </code>
           </div>

@@ -6,3 +6,4 @@ export {
   CursorClickIcon,
   SparklesIcon,
 } from "./FeatureCard";
+export { PilotMascot } from "./PilotMascot";
