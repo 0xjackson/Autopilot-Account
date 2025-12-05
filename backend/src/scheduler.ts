@@ -326,7 +326,7 @@ async function checkRegistryWallets(): Promise<void> {
   const now = new Date();
   lastRegistryCheckAt = now;
 
-  const wallets = getRegisteredWallets();
+  const wallets = await getRegisteredWallets();
   if (wallets.length === 0) return;
 
   log("registry", `Checking ${wallets.length} registered wallet(s) for rebalance/migration`);

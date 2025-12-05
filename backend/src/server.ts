@@ -65,35 +65,28 @@ import {
 import { prepareUserSendOp, submitSignedUserOp } from "./bundler/submit";
 import { CONTRACTS } from "./bundler/constants";
 import type { Address } from "viem";
+import {
+  initDatabase,
+  registerWallet as dbRegisterWallet,
+  getRegisteredWallets as dbGetRegisteredWallets,
+  getWallet as dbGetWallet,
+  getRegisteredWalletCount as dbGetRegisteredWalletCount,
+} from "./db";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
 // ============================================================================
-// Wallet Registry (in-memory storage)
+// Wallet Registry (PostgreSQL persistence)
 // ============================================================================
 
-interface RegisteredWallet {
-  wallet: string;
-  owner: string;
-  createdAt: Date;
+// Re-export for scheduler compatibility
+export async function getRegisteredWallets(): Promise<string[]> {
+  return dbGetRegisteredWallets();
 }
 
-const walletRegistry = new Map<string, RegisteredWallet>();
-
-/**
- * Get all registered wallet addresses
- * Used by scheduler to check wallets for rebalancing
- */
-export function getRegisteredWallets(): string[] {
-  return Array.from(walletRegistry.keys());
-}
-
-/**
- * Get count of registered wallets
- */
-export function getRegisteredWalletCount(): number {
-  return walletRegistry.size;
+export async function getRegisteredWalletCount(): Promise<number> {
+  return dbGetRegisteredWalletCount();
 }
 
 // ============================================================================
@@ -316,7 +309,8 @@ function parseMinApy(apyParam: unknown): number | null {
  * GET /
  * Friendly landing route to show available endpoints
  */
-app.get("/", (_req: Request, res: Response) => {
+app.get("/", async (_req: Request, res: Response) => {
+  const walletCount = await dbGetRegisteredWalletCount();
   res.json({
     status: "ok",
     message: "AutoYield Backend is running",
@@ -340,7 +334,7 @@ app.get("/", (_req: Request, res: Response) => {
       "/admin/cache-status",
     ],
     scheduler: getSchedulerStatus(),
-    registeredWallets: walletRegistry.size,
+    registeredWallets: walletCount,
   });
 });
 
@@ -364,7 +358,7 @@ app.get("/health", (_req: Request, res: Response) => {
  *   - wallet: string (required, smart wallet address)
  *   - owner: string (required, EOA owner address)
  */
-app.post("/register", (req: Request, res: Response) => {
+app.post("/register", async (req: Request, res: Response) => {
   const { wallet, owner } = req.body;
 
   // Validate required fields
@@ -394,16 +388,18 @@ app.post("/register", (req: Request, res: Response) => {
   const walletLower = wallet.toLowerCase();
   const ownerLower = owner.toLowerCase();
 
-  // Idempotent: update if exists, create if not
-  walletRegistry.set(walletLower, {
-    wallet: walletLower,
-    owner: ownerLower,
-    createdAt: walletRegistry.get(walletLower)?.createdAt || new Date(),
-  });
-
-  console.log(`[registry] Wallet registered: ${walletLower} (owner: ${ownerLower})`);
-
-  return res.json({ ok: true, wallet: walletLower });
+  try {
+    // Idempotent: update if exists, create if not
+    await dbRegisterWallet(walletLower, ownerLower);
+    console.log(`[registry] Wallet registered: ${walletLower} (owner: ${ownerLower})`);
+    return res.json({ ok: true, wallet: walletLower });
+  } catch (error) {
+    console.error(`[registry] Failed to register wallet:`, error);
+    const errorResponse: ErrorResponse = {
+      error: "Failed to register wallet",
+    };
+    return res.status(500).json(errorResponse);
+  }
 });
 
 /**
@@ -411,28 +407,44 @@ app.post("/register", (req: Request, res: Response) => {
  * List all registered wallet addresses
  * Used by scheduler to know which wallets to automate
  */
-app.get("/wallets", (_req: Request, res: Response) => {
-  const wallets = Array.from(walletRegistry.keys());
-  return res.json(wallets);
+app.get("/wallets", async (_req: Request, res: Response) => {
+  try {
+    const wallets = await dbGetRegisteredWallets();
+    return res.json(wallets);
+  } catch (error) {
+    console.error(`[/wallets] Error:`, error);
+    const errorResponse: ErrorResponse = {
+      error: "Failed to fetch wallets",
+    };
+    return res.status(500).json(errorResponse);
+  }
 });
 
 /**
  * GET /wallet/:address
  * Get details for a specific registered wallet
  */
-app.get("/wallet/:address", (req: Request, res: Response) => {
+app.get("/wallet/:address", async (req: Request, res: Response) => {
   const address = req.params.address.toLowerCase();
 
-  const wallet = walletRegistry.get(address);
+  try {
+    const wallet = await dbGetWallet(address);
 
-  if (!wallet) {
+    if (!wallet) {
+      const errorResponse: ErrorResponse = {
+        error: `Wallet not found: ${address}`,
+      };
+      return res.status(404).json(errorResponse);
+    }
+
+    return res.json(wallet);
+  } catch (error) {
+    console.error(`[/wallet/:address] Error:`, error);
     const errorResponse: ErrorResponse = {
-      error: `Wallet not found: ${address}`,
+      error: "Failed to fetch wallet",
     };
-    return res.status(404).json(errorResponse);
+    return res.status(500).json(errorResponse);
   }
-
-  return res.json(wallet);
 });
 
 /**
@@ -473,7 +485,7 @@ app.get("/wallet/:address/summary", async (req: Request, res: Response) => {
 
   try {
     // Check if wallet is registered
-    const registeredWallet = walletRegistry.get(address);
+    const registeredWallet = await dbGetWallet(address);
     const isRegistered = !!registeredWallet;
 
     // Get best strategy for this token/chain
@@ -1377,8 +1389,22 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 // Server startup
 // ============================================================================
 
-app.listen(PORT, () => {
-  console.log(`
+async function startServer() {
+  // Initialize database
+  if (process.env.DATABASE_URL) {
+    try {
+      await initDatabase();
+      console.log("[db] PostgreSQL connected and initialized");
+    } catch (error) {
+      console.error("[db] Failed to initialize database:", error);
+      console.warn("[db] Continuing without database - wallet registry will not persist");
+    }
+  } else {
+    console.warn("[db] DATABASE_URL not set - wallet registry will not persist");
+  }
+
+  app.listen(PORT, () => {
+    console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║           AutoYield Backend API                           ║
 ║           Yield Strategy Aggregator                       ║
@@ -1426,6 +1452,13 @@ app.listen(PORT, () => {
     console.log("⚠️  BASE_RPC_URL not set - registry wallet checks disabled");
     console.log("   Set BASE_RPC_URL to enable automatic rebalance detection");
   }
+  });
+}
+
+// Start the server
+startServer().catch((error) => {
+  console.error("Failed to start server:", error);
+  process.exit(1);
 });
 
 // Graceful shutdown
