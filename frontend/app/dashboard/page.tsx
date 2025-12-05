@@ -134,6 +134,15 @@ export default function DashboardPage() {
     }
   }, [toast]);
 
+  // Register wallet with backend on dashboard load (for scheduler monitoring)
+  useEffect(() => {
+    if (!smartWalletAddress || !ownerAddress || isVerifying) return;
+
+    autopilotApi.registerWallet(smartWalletAddress, ownerAddress)
+      .then(() => console.log("[dashboard] Wallet registered with backend"))
+      .catch((err) => console.error("[dashboard] Failed to register wallet:", err));
+  }, [smartWalletAddress, ownerAddress, isVerifying]);
+
   // Fetch strategy info when wallet is available
   useEffect(() => {
     if (!smartWalletAddress || isVerifying) return;
