@@ -365,6 +365,37 @@ async function checkRegistryWallets(): Promise<void> {
       }
     }
 
+    // Handle wallets with surplus but NO vault (first-time deposits)
+    if (bestVault) {
+      const needsInitialVault = results.filter((r) => r.surplus > 0n && !r.hasVault);
+
+      if (needsInitialVault.length > 0) {
+        log("registry", `Found ${needsInitialVault.length} wallet(s) needing initial vault assignment:`);
+
+        for (const result of needsInitialVault) {
+          const shortWallet = `${result.wallet.substring(0, 6)}...${result.wallet.substring(38)}`;
+          log(
+            "registry",
+            `  ${shortWallet}: surplus=${formatUSDC(result.surplus)} USDC, no vault -> assigning ${bestVault.substring(0, 10)}...`
+          );
+
+          if (bundlerEnabled) {
+            try {
+              log("registry", `  Submitting initial migrate UserOp for ${shortWallet}...`);
+              const userOpHash = await submitMigrateStrategyUserOp(result.wallet as Address, USDC_ADDRESS, bestVault);
+              log("registry", `  UserOp submitted: ${userOpHash}`);
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              log("registry", `  ERROR submitting initial vault UserOp: ${errorMsg}`);
+            }
+          } else {
+            log("registry", `  [SIMULATION] Would submit initial vault userOp for ${shortWallet}`);
+          }
+        }
+      }
+    }
+
+    // Handle wallets that need migration to a better vault
     if (bestVault) {
       const needsMigration = results.filter(
         (r) => r.hasVault && r.currentVault && r.currentVault.toLowerCase() !== bestVault.toLowerCase()
