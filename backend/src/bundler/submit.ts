@@ -1,11 +1,20 @@
 import { encodeFunctionData, concat, pad, toHex, type Hex, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { CONTRACTS, AUTO_YIELD_MODULE_ABI, KERNEL_EXECUTE_ABI, EXEC_MODE_DEFAULT } from "./constants";
+import {
+  CONTRACTS,
+  AUTO_YIELD_MODULE_ABI,
+  ERC20_ABI,
+  KERNEL_EXECUTE_ABI,
+  EXEC_MODE_DEFAULT,
+  USER_SEND_GAS_LIMITS,
+} from "./constants";
 import { getUserOpHashV07 } from "./userOp";
 import {
   type UserOperationV07,
   getNonce,
+  getNonceForEcdsa,
   getGasPrices,
+  getPaymasterData,
   sponsorUserOperation,
   sendUserOperation,
   waitForUserOperationReceipt,
@@ -167,4 +176,126 @@ export async function submitSweepDustUserOp(walletAddress: Address): Promise<Hex
     args: [],
   });
   return submitAutomationUserOp(walletAddress, moduleCallData);
+}
+
+// Prepare UserOp for user-signed send
+export async function prepareUserSendOp(
+  walletAddress: Address,
+  recipient: Address,
+  amount: bigint,
+  token: Address = CONTRACTS.USDC
+): Promise<{ userOp: UserOperationV07; userOpHash: Hex }> {
+  console.log(`[bundler] Prepare send: ${walletAddress} -> ${recipient}, ${amount} of ${token}`);
+
+  // 1. Build ERC20 transfer calldata
+  const transferCalldata = encodeFunctionData({
+    abi: ERC20_ABI,
+    functionName: "transfer",
+    args: [recipient, amount],
+  });
+
+  // 2. Build executeWithAutoYield calldata
+  const moduleCallData = encodeFunctionData({
+    abi: AUTO_YIELD_MODULE_ABI,
+    functionName: "executeWithAutoYield",
+    args: [token, recipient, amount, transferCalldata],
+  });
+
+  // 3. Build Kernel execute calldata
+  const executionCalldata = concat([
+    CONTRACTS.MODULE,
+    pad(toHex(0n), { size: 32 }),
+    moduleCallData,
+  ]);
+
+  const callData = encodeFunctionData({
+    abi: KERNEL_EXECUTE_ABI,
+    functionName: "execute",
+    args: [EXEC_MODE_DEFAULT, executionCalldata],
+  });
+
+  // 4. Get nonce using ECDSA validator (NOT automation validator)
+  const nonce = await getNonceForEcdsa(walletAddress);
+  const { maxFeePerGas, maxPriorityFeePerGas } = await getGasPrices();
+
+  console.log(`[bundler] Nonce: ${nonce}, Gas prices: ${maxFeePerGas}/${maxPriorityFeePerGas}`);
+
+  // 5. Build unsigned UserOp with hardcoded gas limits
+  const unsignedUserOp = {
+    sender: walletAddress,
+    nonce: toHex(nonce),
+    factory: null,
+    factoryData: null,
+    callData,
+    callGasLimit: toHex(USER_SEND_GAS_LIMITS.callGasLimit),
+    verificationGasLimit: toHex(USER_SEND_GAS_LIMITS.verificationGasLimit),
+    preVerificationGas: toHex(USER_SEND_GAS_LIMITS.preVerificationGas),
+    maxFeePerGas: toHex(maxFeePerGas),
+    maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
+    paymaster: null,
+    paymasterVerificationGasLimit: null,
+    paymasterPostOpGasLimit: null,
+    paymasterData: null,
+  };
+
+  // 6. Get paymaster data (no signature required!)
+  console.log(`[bundler] Getting paymaster data...`);
+  const paymasterResult = await getPaymasterData(unsignedUserOp);
+  console.log(`[bundler] Paymaster: ${paymasterResult.paymaster}`);
+
+  // 7. Build final UserOp with paymaster fields
+  const userOp: UserOperationV07 = {
+    sender: walletAddress,
+    nonce: toHex(nonce),
+    factory: null,
+    factoryData: null,
+    callData,
+    callGasLimit: toHex(USER_SEND_GAS_LIMITS.callGasLimit),
+    verificationGasLimit: toHex(USER_SEND_GAS_LIMITS.verificationGasLimit),
+    preVerificationGas: toHex(USER_SEND_GAS_LIMITS.preVerificationGas),
+    maxFeePerGas: toHex(maxFeePerGas),
+    maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
+    paymaster: paymasterResult.paymaster,
+    paymasterVerificationGasLimit: toHex(USER_SEND_GAS_LIMITS.paymasterVerificationGasLimit),
+    paymasterPostOpGasLimit: toHex(USER_SEND_GAS_LIMITS.paymasterPostOpGasLimit),
+    paymasterData: paymasterResult.paymasterData,
+    signature: "0x", // Placeholder - user will sign
+  };
+
+  // 8. Compute hash for user to sign
+  const userOpHash = getUserOpHashV07({
+    sender: walletAddress,
+    nonce,
+    factory: null,
+    factoryData: null,
+    callData,
+    callGasLimit: USER_SEND_GAS_LIMITS.callGasLimit,
+    verificationGasLimit: USER_SEND_GAS_LIMITS.verificationGasLimit,
+    preVerificationGas: USER_SEND_GAS_LIMITS.preVerificationGas,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+    paymaster: paymasterResult.paymaster,
+    paymasterVerificationGasLimit: USER_SEND_GAS_LIMITS.paymasterVerificationGasLimit,
+    paymasterPostOpGasLimit: USER_SEND_GAS_LIMITS.paymasterPostOpGasLimit,
+    paymasterData: paymasterResult.paymasterData,
+  });
+
+  console.log(`[bundler] UserOp hash: ${userOpHash}`);
+
+  return { userOp, userOpHash };
+}
+
+// Submit a user-signed UserOp
+export async function submitSignedUserOp(
+  userOp: UserOperationV07
+): Promise<{ hash: Hex; txHash: Hex }> {
+  console.log(`[bundler] Submitting signed UserOp...`);
+
+  const hash = await sendUserOperation(userOp);
+  console.log(`[bundler] Submitted: ${hash}`);
+
+  const receipt = await waitForUserOperationReceipt(hash);
+  console.log(`[bundler] Confirmed: ${receipt.receipt.transactionHash}`);
+
+  return { hash, txHash: receipt.receipt.transactionHash };
 }

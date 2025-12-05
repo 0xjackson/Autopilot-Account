@@ -62,6 +62,9 @@ import {
   isValidWalletAddress,
   isValidTaskAction,
 } from "./scheduler";
+import { prepareUserSendOp, submitSignedUserOp } from "./bundler/submit";
+import { CONTRACTS } from "./bundler/constants";
+import type { Address } from "viem";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -1274,6 +1277,79 @@ app.get("/admin/cache-status", (req: Request, res: Response) => {
     expiresAt: status.expiresAt.toISOString(),
     strategyCount: status.strategyCount,
   });
+});
+
+// ============================================================================
+// User Send Operations
+// ============================================================================
+
+/**
+ * POST /ops/prepare-send
+ * Prepare a send UserOp (returns unsigned UserOp + hash to sign)
+ *
+ * Body:
+ *   - walletAddress: string (required, smart wallet address)
+ *   - recipient: string (required, recipient address)
+ *   - amount: string (required, amount in smallest unit)
+ *   - token: string (optional, defaults to USDC)
+ */
+app.post("/ops/prepare-send", async (req: Request, res: Response) => {
+  try {
+    const { walletAddress, recipient, amount, token } = req.body;
+
+    if (!walletAddress || !recipient || !amount) {
+      const errorResponse: ErrorResponse = {
+        error: "Missing required fields: walletAddress, recipient, amount",
+      };
+      return res.status(400).json(errorResponse);
+    }
+
+    const result = await prepareUserSendOp(
+      walletAddress as Address,
+      recipient as Address,
+      BigInt(amount),
+      (token as Address) || CONTRACTS.USDC
+    );
+
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error("[/ops/prepare-send] Error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    const errorResponse: ErrorResponse = { error: message };
+    return res.status(500).json(errorResponse);
+  }
+});
+
+/**
+ * POST /ops/submit-signed
+ * Submit a signed UserOp
+ *
+ * Body:
+ *   - userOp: object (required, the UserOp from prepare-send)
+ *   - signature: string (required, the user's signature)
+ */
+app.post("/ops/submit-signed", async (req: Request, res: Response) => {
+  try {
+    const { userOp, signature } = req.body;
+
+    if (!userOp || !signature) {
+      const errorResponse: ErrorResponse = {
+        error: "Missing required fields: userOp, signature",
+      };
+      return res.status(400).json(errorResponse);
+    }
+
+    // Attach signature to UserOp
+    userOp.signature = signature;
+
+    const result = await submitSignedUserOp(userOp);
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error("[/ops/submit-signed] Error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    const errorResponse: ErrorResponse = { error: message };
+    return res.status(500).json(errorResponse);
+  }
 });
 
 // ============================================================================
