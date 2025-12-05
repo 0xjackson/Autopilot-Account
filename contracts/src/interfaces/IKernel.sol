@@ -77,6 +77,16 @@ interface IKernel {
     function execute(ExecMode mode, bytes calldata executionCalldata) external payable;
 
     /**
+     * @notice Execute a call from an installed executor module
+     * @dev Only callable by installed executor modules. Uses executor's configured hook.
+     * @param mode Execution mode (use EXEC_MODE_DEFAULT for single calls)
+     * @param executionCalldata Encoded as: target (20 bytes) + value (32 bytes) + calldata
+     * @return returnData Array of return data from executed calls
+     */
+    function executeFromExecutor(ExecMode mode, bytes calldata executionCalldata)
+        external payable returns (bytes[] memory returnData);
+
+    /**
      * @notice Install a module on the account
      * @param moduleTypeId Type of module (1=validator, 2=executor, 3=fallback, 4=hook)
      * @param module Module address
