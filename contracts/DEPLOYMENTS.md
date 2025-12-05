@@ -8,9 +8,9 @@ Last Updated: December 4, 2024
 
 | Contract | Address | Description |
 |----------|---------|-------------|
-| **AutopilotFactory** | [`0xcf10279BAA0d5407Dbb637517d23055A55E72923`](https://basescan.org/address/0xcf10279BAA0d5407Dbb637517d23055A55E72923) | Factory for deploying Autopilot smart wallets |
+| **AutopilotFactory** | [`0xFBb91eb4234558b191c393985eF34282B551e81B`](https://basescan.org/address/0xFBb91eb4234558b191c393985eF34282B551e81B) | Factory for deploying Autopilot smart wallets |
 | **AutoYieldModule** | [`0x71b5A4663A49FF02BE672Ea9560256D2268727B7`](https://basescan.org/address/0x71b5A4663A49FF02BE672Ea9560256D2268727B7) | ERC-7579 executor module for auto-yield logic |
-| **AutomationValidator** | [`0xe29ed376a2780f653C14EEC203eD25094c0E772A`](https://basescan.org/address/0xe29ed376a2780f653C14EEC203eD25094c0E772A) | ERC-7579 validator for automation key signatures |
+| **AutomationValidator** | [`0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b`](https://basescan.org/address/0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b) | ERC-7579 validator for automation key signatures |
 | **MorphoAdapter** | [`0x42EFecD83447e5b90c5F706309FaC8f9615bd68F`](https://basescan.org/address/0x42EFecD83447e5b90c5F706309FaC8f9615bd68F) | Adapter for Moonwell Flagship USDC vault |
 
 ### Configuration
@@ -33,9 +33,9 @@ Last Updated: December 4, 2024
 
 ```typescript
 export const CONTRACTS = {
-  FACTORY: "0xcf10279BAA0d5407Dbb637517d23055A55E72923",
+  FACTORY: "0xFBb91eb4234558b191c393985eF34282B551e81B",
   MODULE: "0x71b5A4663A49FF02BE672Ea9560256D2268727B7",
-  VALIDATOR: "0xe29ed376a2780f653C14EEC203eD25094c0E772A",
+  VALIDATOR: "0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b",
   ADAPTER: "0x42EFecD83447e5b90c5F706309FaC8f9615bd68F",
   USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 } as const;
@@ -48,10 +48,16 @@ AUTOMATION_PUBLIC_ADDRESS=0xD78F5099987389e33bD6Ec15FF3Ca4dBedD507f3
 
 ## Deployment History
 
-### v2 - December 4, 2024
+### v3 - December 4, 2024
+- Fixed AutomationValidator to parse ERC-7579 execute(bytes32,bytes) format
+- Redeployed Factory with new validator address
+- All contracts verified on Basescan
+
+### v2 - December 4, 2024 (Deprecated)
 - Fixed Kernel v3 module install data format (executor + validator)
 - Added AutomationValidator for session key UserOp signing
-- All contracts verified on Basescan
+- AutopilotFactory: `0xcf10279BAA0d5407Dbb637517d23055A55E72923`
+- AutomationValidator: `0xe29ed376a2780f653C14EEC203eD25094c0E772A`
 
 ### v1 - December 3, 2024 (Deprecated)
 - Initial deployment

@@ -33,7 +33,7 @@ contract AutopilotFactory {
 
     bytes4 private constant SELECTOR_REBALANCE = 0x21c28191;
     bytes4 private constant SELECTOR_MIGRATE = 0x6cb56d19;
-    bytes4 private constant SELECTOR_EXECUTE = 0xb61d27f6;
+    bytes4 private constant SELECTOR_EXECUTE = 0xe9ae5c53;
 
     uint256 public constant DEFAULT_THRESHOLD = 100e6;
 

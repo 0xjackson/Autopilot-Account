@@ -1,17 +1,12 @@
 import { encodeFunctionData, concat, pad, toHex, type Hex, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { CONTRACTS, AUTO_YIELD_MODULE_ABI, KERNEL_EXECUTE_ABI, EXEC_MODE_DEFAULT } from "./constants";
+import { getUserOpHashV07 } from "./userOp";
 import {
-  type PackedUserOperation,
-  packUint128,
-  getUserOpHash,
-} from "./userOp";
-import {
+  type UserOperationV07,
   getNonce,
   getGasPrices,
-  getPaymasterStubData,
-  getPaymasterData,
-  estimateUserOperationGas,
+  sponsorUserOperation,
   sendUserOperation,
   waitForUserOperationReceipt,
 } from "./rpc";
@@ -25,10 +20,7 @@ function getAutomationSigner() {
   return privateKeyToAccount(AUTOMATION_PRIVATE_KEY);
 }
 
-async function submitAutomationUserOp(
-  walletAddress: Address,
-  moduleCallData: Hex
-): Promise<Hex> {
+async function submitAutomationUserOp(walletAddress: Address, moduleCallData: Hex): Promise<Hex> {
   const signer = getAutomationSigner();
   console.log(`[bundler] Signer: ${signer.address}, Wallet: ${walletAddress}`);
 
@@ -46,74 +38,92 @@ async function submitAutomationUserOp(
 
   const nonce = await getNonce(walletAddress);
   const { maxFeePerGas, maxPriorityFeePerGas } = await getGasPrices();
-  const gasFees = packUint128(maxPriorityFeePerGas, maxFeePerGas);
 
-  const stubGasLimits = packUint128(500000n, 500000n);
-  const stubPreVerificationGas = 100000n;
+  const initialGas = { call: 500000n, verification: 500000n, preVerification: 100000n };
 
-  const stubPaymasterAndData = await getPaymasterStubData({
+  const stubUserOp = {
     sender: walletAddress,
     nonce,
-    initCode: "0x",
+    factory: null as Address | null,
+    factoryData: null as Hex | null,
     callData,
-    accountGasLimits: stubGasLimits,
-    preVerificationGas: stubPreVerificationGas,
+    callGasLimit: initialGas.call,
+    verificationGasLimit: initialGas.verification,
+    preVerificationGas: initialGas.preVerification,
     maxFeePerGas,
     maxPriorityFeePerGas,
-  });
-
-  const stubUserOp: PackedUserOperation = {
-    sender: walletAddress,
-    nonce,
-    initCode: "0x",
-    callData,
-    accountGasLimits: stubGasLimits,
-    preVerificationGas: stubPreVerificationGas,
-    gasFees,
-    paymasterAndData: stubPaymasterAndData,
-    signature: "0x",
+    paymaster: null as Address | null,
+    paymasterVerificationGasLimit: null as bigint | null,
+    paymasterPostOpGasLimit: null as bigint | null,
+    paymasterData: null as Hex | null,
   };
 
-  const stubHash = getUserOpHash(stubUserOp);
+  const stubHash = getUserOpHashV07(stubUserOp);
   const stubSignature = await signer.signMessage({ message: { raw: stubHash } });
-  stubUserOp.signature = stubSignature;
 
-  const gasEstimate = await estimateUserOperationGas(stubUserOp);
+  console.log(`[bundler] Requesting sponsorship...`);
 
-  const accountGasLimits = packUint128(
-    BigInt(gasEstimate.verificationGasLimit),
-    BigInt(gasEstimate.callGasLimit)
-  );
-  const preVerificationGas = BigInt(gasEstimate.preVerificationGas);
-
-  const paymasterAndData = await getPaymasterData({
+  const stubUserOpForSponsorship: UserOperationV07 = {
     sender: walletAddress,
-    nonce,
-    initCode: "0x",
+    nonce: toHex(nonce),
+    factory: null,
+    factoryData: null,
     callData,
-    accountGasLimits,
-    preVerificationGas,
-    maxFeePerGas,
-    maxPriorityFeePerGas,
-  });
-
-  const finalUserOp: PackedUserOperation = {
-    sender: walletAddress,
-    nonce,
-    initCode: "0x",
-    callData,
-    accountGasLimits,
-    preVerificationGas,
-    gasFees,
-    paymasterAndData,
-    signature: "0x",
+    callGasLimit: toHex(initialGas.call),
+    verificationGasLimit: toHex(initialGas.verification),
+    preVerificationGas: toHex(initialGas.preVerification),
+    maxFeePerGas: toHex(maxFeePerGas),
+    maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
+    paymaster: null,
+    paymasterVerificationGasLimit: null,
+    paymasterPostOpGasLimit: null,
+    paymasterData: null,
+    signature: stubSignature,
   };
 
-  const finalHash = getUserOpHash(finalUserOp);
-  const finalSignature = await signer.signMessage({ message: { raw: finalHash } });
-  finalUserOp.signature = finalSignature;
+  const sponsorship = await sponsorUserOperation(stubUserOpForSponsorship);
+  console.log(`[bundler] Sponsored by: ${sponsorship.paymaster}`);
 
-  const submittedHash = await sendUserOperation(finalUserOp);
+  const finalUserOp = {
+    sender: walletAddress,
+    nonce,
+    factory: null as Address | null,
+    factoryData: null as Hex | null,
+    callData,
+    callGasLimit: BigInt(sponsorship.callGasLimit),
+    verificationGasLimit: BigInt(sponsorship.verificationGasLimit),
+    preVerificationGas: BigInt(sponsorship.preVerificationGas),
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+    paymaster: sponsorship.paymaster,
+    paymasterVerificationGasLimit: BigInt(sponsorship.paymasterVerificationGasLimit),
+    paymasterPostOpGasLimit: BigInt(sponsorship.paymasterPostOpGasLimit),
+    paymasterData: sponsorship.paymasterData,
+  };
+
+  const finalHash = getUserOpHashV07(finalUserOp);
+  const finalSignature = await signer.signMessage({ message: { raw: finalHash } });
+
+  const userOpToSubmit: UserOperationV07 = {
+    sender: walletAddress,
+    nonce: toHex(nonce),
+    factory: null,
+    factoryData: null,
+    callData,
+    callGasLimit: sponsorship.callGasLimit,
+    verificationGasLimit: sponsorship.verificationGasLimit,
+    preVerificationGas: sponsorship.preVerificationGas,
+    maxFeePerGas: toHex(maxFeePerGas),
+    maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
+    paymaster: sponsorship.paymaster,
+    paymasterVerificationGasLimit: sponsorship.paymasterVerificationGasLimit,
+    paymasterPostOpGasLimit: sponsorship.paymasterPostOpGasLimit,
+    paymasterData: sponsorship.paymasterData,
+    signature: finalSignature,
+  };
+
+  console.log(`[bundler] Submitting...`);
+  const submittedHash = await sendUserOperation(userOpToSubmit);
   console.log(`[bundler] Submitted: ${submittedHash}`);
 
   const receipt = await waitForUserOperationReceipt(submittedHash);

@@ -1,10 +1,10 @@
 import { type Address } from "viem";
 
-// Deployed contract addresses on Base Mainnet (v2 - December 4, 2024)
+// Deployed contract addresses on Base Mainnet (v3 - December 4, 2024)
 export const CONTRACTS = {
   // AutopilotFactory - deploys smart wallets with AutoYieldModule pre-installed
   FACTORY: (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ||
-    "0xcf10279BAA0d5407Dbb637517d23055A55E72923") as Address,
+    "0xF8013d73a9791056eCFA1C0D0f68B29D17424f51") as Address,
 
   // AutoYieldModule - manages yield allocation for smart wallets
   MODULE: (process.env.NEXT_PUBLIC_MODULE_ADDRESS ||
@@ -12,7 +12,7 @@ export const CONTRACTS = {
 
   // AutomationValidator - ERC-7579 validator for automation key signatures
   VALIDATOR: (process.env.NEXT_PUBLIC_VALIDATOR_ADDRESS ||
-    "0xe29ed376a2780f653C14EEC203eD25094c0E772A") as Address,
+    "0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b") as Address,
 
   // MorphoAdapter - default yield adapter
   ADAPTER: (process.env.NEXT_PUBLIC_ADAPTER_ADDRESS ||
