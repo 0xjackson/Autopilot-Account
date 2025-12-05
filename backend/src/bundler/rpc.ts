@@ -171,7 +171,7 @@ export async function getPaymasterStubData(
     paymasterData: Hex | null;
   }
 ): Promise<PaymasterStubDataResult> {
-  return pimlicoRpc<PaymasterStubDataResult>(
+  const result = await pimlicoRpc<PaymasterStubDataResult>(
     "pm_getPaymasterStubData",
     [
       userOp,
@@ -180,6 +180,8 @@ export async function getPaymasterStubData(
       null, // context - null for sponsorship
     ]
   );
+  console.log("[DEBUG] pm_getPaymasterStubData raw response:", JSON.stringify(result, null, 2));
+  return result;
 }
 
 export async function getGasPrices(): Promise<{
