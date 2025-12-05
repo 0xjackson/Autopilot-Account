@@ -244,9 +244,9 @@ export function SettingsForm() {
       )}
 
       {/* Checking Threshold */}
-      <Card>
+      <Card className="border-gray-200 shadow-sm bg-white">
         <CardHeader>
-          <CardTitle className="text-lg">Checking Threshold</CardTitle>
+          <CardTitle className="text-lg text-gray-900">Checking Threshold</CardTitle>
           <CardDescription>
             Minimum USDC to keep in checking. Excess is auto-deposited to yield.
           </CardDescription>
@@ -270,9 +270,9 @@ export function SettingsForm() {
       </Card>
 
       {/* Auto-Yield Token Toggles */}
-      <Card>
+      <Card className="border-gray-200 shadow-sm bg-white">
         <CardHeader>
-          <CardTitle className="text-lg">Auto-Yield Tokens</CardTitle>
+          <CardTitle className="text-lg text-gray-900">Auto-Yield Tokens</CardTitle>
           <CardDescription>
             Select which tokens should automatically earn yield when above your
             checking threshold.
@@ -309,11 +309,11 @@ export function SettingsForm() {
       </Card>
 
       {/* Dust Sweep Configuration */}
-      <Card>
+      <Card className="border-gray-200 shadow-sm bg-white">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-lg">Dust Sweep</CardTitle>
+              <CardTitle className="text-lg text-gray-900">Dust Sweep</CardTitle>
               <CardDescription>
                 Automatically consolidate small token balances
               </CardDescription>

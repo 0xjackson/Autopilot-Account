@@ -20,7 +20,6 @@ const FEATURES = [
     title: "Auto-Yield",
     description:
       "Your excess USDC automatically moves into the highest-yielding strategies. No clicks, no monitoring - it just happens.",
-    emoji: "📈",
   },
   {
     icon: <ZapIcon />,
@@ -28,7 +27,6 @@ const FEATURES = [
     title: "Gasless UX",
     description:
       "Never worry about ETH for gas again. All transactions are sponsored. Your funds stay 100% productive.",
-    emoji: "⚡",
   },
   {
     icon: <CursorClickIcon />,
@@ -36,7 +34,6 @@ const FEATURES = [
     title: "One-Click Spend",
     description:
       "Spend directly from your wallet. Funds are automatically pulled from yield if needed - all in a single transaction.",
-    emoji: "🖱️",
   },
 ] as const;
 
@@ -231,7 +228,6 @@ export default function LandingPage() {
                 iconColor={feature.iconColor}
                 title={feature.title}
                 description={feature.description}
-                emoji={feature.emoji}
               />
             </div>
           ))}
@@ -253,21 +249,18 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <StepCard
               number="1"
-              emoji="💵"
               title="Deposit USDC"
               description="Send USDC to your new smart wallet address. Works with any exchange or wallet."
               detail="Your funds are secured by the same technology that protects billions in DeFi."
             />
             <StepCard
               number="2"
-              emoji="🎯"
               title="Set Your Threshold"
               description="Choose how much to keep liquid for spending. The rest gets put to work."
               detail="Need $500 for daily expenses? Set that as your threshold. Easy."
             />
             <StepCard
               number="3"
-              emoji="😎"
               title="Sit Back & Earn"
               description="Watch your idle capital generate yield automatically, 24/7."
               detail="Spend anytime - funds are pulled from yield seamlessly in one transaction."
@@ -294,26 +287,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Trust Section */}
-      <section className="py-16 md:py-20">
-        <div className="max-w-4xl mx-auto px-4 text-center">
-          <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-4">
-            Built on Battle-Tested Technology
-          </h2>
-          <p className="text-gray-600 max-w-2xl mx-auto mb-12">
-            Autopilot Wallet is powered by industry-standard smart account infrastructure.
-            Your keys, your funds, your control.
-          </p>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <TechBadge icon="🔐" label="ERC-4337" description="Smart Accounts" />
-            <TechBadge icon="🧩" label="ERC-7579" description="Modular Design" />
-            <TechBadge icon="⛽" label="Gasless" description="Sponsored Txs" />
-            <TechBadge icon="🔵" label="Base" description="L2 Network" />
-          </div>
-        </div>
-      </section>
-
       {/* Footer note */}
       <section className="py-12 text-center border-t border-gray-200">
         <p className="text-sm text-gray-500 max-w-lg mx-auto">
@@ -327,13 +300,11 @@ export default function LandingPage() {
 
 function StepCard({
   number,
-  emoji,
   title,
   description,
   detail,
 }: {
   number: string;
-  emoji: string;
   title: string;
   description: string;
   detail: string;
@@ -344,7 +315,6 @@ function StepCard({
         <div className="w-10 h-10 rounded-full bg-[#4169E1] flex items-center justify-center text-lg font-bold text-white shadow-lg shadow-[#4169E1]/20">
           {number}
         </div>
-        <span className="text-3xl">{emoji}</span>
       </div>
       <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
       <p className="text-gray-600 mb-3">{description}</p>
@@ -374,16 +344,6 @@ function FlowArrow() {
       <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
       </svg>
-    </div>
-  );
-}
-
-function TechBadge({ icon, label, description }: { icon: string; label: string; description: string }) {
-  return (
-    <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-      <div className="text-2xl mb-2">{icon}</div>
-      <div className="font-semibold text-gray-900">{label}</div>
-      <div className="text-sm text-gray-500">{description}</div>
     </div>
   );
 }
