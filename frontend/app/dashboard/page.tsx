@@ -138,6 +138,15 @@ export default function DashboardPage() {
     }
   }, [toast]);
 
+  // Register wallet with backend on dashboard load (for scheduler monitoring)
+  useEffect(() => {
+    if (!smartWalletAddress || !ownerAddress || isVerifying) return;
+
+    autopilotApi.registerWallet(smartWalletAddress, ownerAddress)
+      .then(() => console.log("[dashboard] Wallet registered with backend"))
+      .catch((err) => console.error("[dashboard] Failed to register wallet:", err));
+  }, [smartWalletAddress, ownerAddress, isVerifying]);
+
   // Fetch strategy info when wallet is available
   useEffect(() => {
     if (!smartWalletAddress || isVerifying) return;
@@ -236,9 +245,9 @@ export default function DashboardPage() {
       {/* Balance Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
-          <p className="text-gray-500 text-sm">Checking Balance</p>
-          <p className="text-2xl font-bold mt-1 text-gray-900">${formatUSDC(checkingBalance as bigint)}</p>
-          <p className="text-gray-400 text-xs mt-1">Available for spending</p>
+          <p className="text-gray-500 text-sm">Total Balance</p>
+          <p className="text-2xl font-bold mt-1 text-gray-900">${formatUSDC(totalBalance as bigint)}</p>
+          <p className="text-gray-400 text-xs mt-1">USDC</p>
         </div>
 
         <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
@@ -252,9 +261,21 @@ export default function DashboardPage() {
         </div>
 
         <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
-          <p className="text-gray-500 text-sm">Total Balance</p>
-          <p className="text-2xl font-bold mt-1 text-gray-900">${formatUSDC(totalBalance as bigint)}</p>
-          <p className="text-gray-400 text-xs mt-1">USDC</p>
+          <p className="text-gray-500 text-sm">Current APY</p>
+          {isLoadingStrategy ? (
+            <div className="h-7 w-20 bg-gray-100 rounded animate-pulse mt-1" />
+          ) : (
+            <p className="text-2xl font-bold mt-1 text-green-600">
+              {currentStrategy ? `${(currentStrategy.apy * 100).toFixed(2)}%` : "—"}
+            </p>
+          )}
+          {isLoadingStrategy ? (
+            <div className="h-4 w-32 bg-gray-100 rounded animate-pulse mt-1" />
+          ) : (
+            <p className="text-gray-400 text-xs mt-1">
+              {currentStrategy?.name || "No active strategy"}
+            </p>
+          )}
         </div>
       </div>
 
@@ -310,6 +331,7 @@ export default function DashboardPage() {
           }}
         />
       )}
+
 
       {/* Send Section */}
       <div className="bg-white rounded-xl p-6 border border-gray-200 space-y-6 shadow-lg">
