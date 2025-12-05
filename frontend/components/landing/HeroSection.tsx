@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
@@ -9,31 +8,21 @@ import { PilotMascot } from "./PilotMascot";
 
 interface HeroSectionProps {
   hasWallet: boolean;
-  onCreateWallet: () => void | Promise<void>;
+  isConnected: boolean;
+  onGetStarted: () => void | Promise<void>;
   onGoToDashboard: () => void;
+  isCreating?: boolean;
+  error?: string | null;
 }
 
 export function HeroSection({
   hasWallet,
-  onCreateWallet,
+  isConnected,
+  onGetStarted,
   onGoToDashboard,
+  isCreating = false,
+  error = null,
 }: HeroSectionProps) {
-  const [isCreating, setIsCreating] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleCreateWallet = async () => {
-    setIsCreating(true);
-    setError(null);
-    try {
-      await onCreateWallet();
-      setIsSuccess(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create wallet");
-    } finally {
-      setIsCreating(false);
-    }
-  };
 
   return (
     <section className="relative flex flex-col items-center justify-center text-center py-12 md:py-20">
@@ -64,15 +53,7 @@ export function HeroSection({
 
             {/* CTA Section */}
             <div className="pt-4 animate-fade-in-delay-2">
-              {isSuccess ? (
-                <Alert variant="success" className="max-w-md mx-auto lg:mx-0">
-                  <CheckCircleIcon className="h-5 w-5" />
-                  <AlertTitle>Wallet Created!</AlertTitle>
-                  <AlertDescription>
-                    Your Autopilot wallet is ready. Redirecting to dashboard...
-                  </AlertDescription>
-                </Alert>
-              ) : error ? (
+              {error ? (
                 <div className="space-y-4">
                   <Alert variant="destructive" className="max-w-md mx-auto lg:mx-0">
                     <AlertTitle>Error</AlertTitle>
@@ -80,7 +61,7 @@ export function HeroSection({
                   </Alert>
                   <Button
                     size="lg"
-                    onClick={handleCreateWallet}
+                    onClick={onGetStarted}
                     disabled={isCreating}
                     className="h-14 px-10 text-lg bg-[#4169E1] hover:bg-[#4169E1]/90 text-white"
                   >
@@ -109,7 +90,7 @@ export function HeroSection({
               ) : (
                 <Button
                   size="lg"
-                  onClick={handleCreateWallet}
+                  onClick={onGetStarted}
                   disabled={isCreating}
                   className={cn(
                     "h-16 px-12 text-xl font-semibold",
@@ -161,24 +142,6 @@ export function HeroSection({
 }
 
 // Icon components
-function CheckCircleIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-      />
-    </svg>
-  );
-}
-
 function ShieldIcon({ className }: { className?: string }) {
   return (
     <svg

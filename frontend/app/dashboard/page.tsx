@@ -94,9 +94,9 @@ export default function DashboardPage() {
   const recipientValid = isValidAddress(recipient);
   const recipientError = recipientTouched && recipient.length > 0 && !recipientValid;
 
-  const checkingNum = Number(checkingBalance || 0n) / 1e6;
-  const yieldNum = Number(yieldBalance || 0n) / 1e6;
-  const totalNum = Number(totalBalance || 0n) / 1e6;
+  const checkingNum = Number(checkingBalance || BigInt(0)) / 1e6;
+  const yieldNum = Number(yieldBalance || BigInt(0)) / 1e6;
+  const totalNum = Number(totalBalance || BigInt(0)) / 1e6;
 
   const amountNum = parseFloat(amount) || 0;
   const amountExceedsBalance = amountNum > totalNum;

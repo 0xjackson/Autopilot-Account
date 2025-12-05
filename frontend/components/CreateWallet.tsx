@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useSwitchChain } from "wagmi";
 import { keccak256, toBytes } from "viem";
 import { base } from "wagmi/chains";
@@ -12,8 +12,11 @@ import { autopilotApi } from "@/lib/api/client";
 
 export function CreateWallet() {
   const { address: ownerAddress, isConnected, chainId } = useAccount();
-  const { switchChain } = useSwitchChain();
+  const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
   const [hasRedirected, setHasRedirected] = useState(false);
+  const [autoCreateTriggered, setAutoCreateTriggered] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string>("");
+  const [currentOwner, setCurrentOwner] = useState<string | undefined>(undefined);
 
   // Check if on correct chain
   const isOnBase = chainId === base.id;
@@ -49,6 +52,55 @@ export function CreateWallet() {
     hash,
   });
 
+  // Handle EOA switch - reset state when owner changes (only if no tx in progress)
+  useEffect(() => {
+    if (ownerAddress && ownerAddress !== currentOwner) {
+      // Only reset if no transaction is pending or confirming
+      if (!isPending && !isConfirming) {
+        setCurrentOwner(ownerAddress);
+        setHasRedirected(false);
+        setAutoCreateTriggered(false);
+        setStatusMessage("");
+      }
+    }
+  }, [ownerAddress, currentOwner, isPending, isConfirming]);
+
+  // Handle the create wallet button click - switches chain if needed, then creates wallet
+  const handleCreateClick = useCallback(() => {
+    if (!salt || isPending || isConfirming) return;
+
+    // If not on Base, switch first - the effect below will trigger wallet creation after switch
+    if (!isOnBase && !isSwitchingChain) {
+      setAutoCreateTriggered(true); // Mark that user initiated the flow
+      setStatusMessage("Switching to Base network...");
+      switchChain({ chainId: base.id });
+      return;
+    }
+
+    // Already on Base, create wallet directly
+    setAutoCreateTriggered(true);
+    setStatusMessage("Waiting for signature...");
+    writeContract({
+      address: CONTRACTS.FACTORY,
+      abi: FACTORY_ABI,
+      functionName: "createAccount",
+      args: [salt],
+    });
+  }, [salt, isOnBase, isSwitchingChain, isPending, isConfirming, switchChain, writeContract]);
+
+  // After chain switch completes, auto-trigger wallet creation (only if user initiated)
+  useEffect(() => {
+    if (autoCreateTriggered && isOnBase && salt && !isPending && !isConfirming && !hash && !isSwitchingChain) {
+      setStatusMessage("Waiting for signature...");
+      writeContract({
+        address: CONTRACTS.FACTORY,
+        abi: FACTORY_ABI,
+        functionName: "createAccount",
+        args: [salt],
+      });
+    }
+  }, [autoCreateTriggered, isOnBase, salt, isPending, isConfirming, hash, isSwitchingChain, writeContract]);
+
   // Check if user already has an account and redirect
   useEffect(() => {
     if (existingAccount && existingAccount !== "0x0000000000000000000000000000000000000000" && ownerAddress && !hasRedirected) {
@@ -63,22 +115,16 @@ export function CreateWallet() {
     }
   }, [existingAccount, ownerAddress, hasRedirected]);
 
-  // Switch to Base network
-  const handleSwitchChain = () => {
-    switchChain({ chainId: base.id });
-  };
-
-  // Create the wallet - uses msg.sender as owner
-  const handleCreate = () => {
-    if (!salt || !isOnBase) return;
-
-    writeContract({
-      address: CONTRACTS.FACTORY,
-      abi: FACTORY_ABI,
-      functionName: "createAccount",
-      args: [salt],
-    });
-  };
+  // Update status message based on state
+  useEffect(() => {
+    if (isPending) {
+      setStatusMessage("Waiting for signature...");
+    } else if (isConfirming) {
+      setStatusMessage("Creating wallet...");
+    } else if (isSwitchingChain) {
+      setStatusMessage("Switching to Base network...");
+    }
+  }, [isPending, isConfirming, isSwitchingChain]);
 
   // When transaction confirms, save the wallet and redirect
   useEffect(() => {
@@ -135,6 +181,15 @@ export function CreateWallet() {
     );
   }
 
+  // Determine the current status for display
+  const isProcessing = isSwitchingChain || isPending || isConfirming;
+  const displayStatus = statusMessage || (
+    isSwitchingChain ? "Switching to Base network..." :
+    isPending ? "Waiting for signature..." :
+    isConfirming ? "Creating wallet..." :
+    "Setting up your wallet..."
+  );
+
   return (
     <Card className="w-full max-w-md">
       <CardHeader>
@@ -144,41 +199,43 @@ export function CreateWallet() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!isOnBase && (
-          <div className="bg-yellow-900/50 border border-yellow-600 rounded-lg p-3 text-sm text-yellow-200">
-            You're not on Base network. Click below to switch.
-          </div>
-        )}
-
         <div className="text-sm text-gray-400">
           <p>Owner: {ownerAddress?.slice(0, 6)}...{ownerAddress?.slice(-4)}</p>
           {predictedAddress && (
             <p>Wallet address: {(predictedAddress as string).slice(0, 6)}...{(predictedAddress as string).slice(-4)}</p>
           )}
-          <p className="mt-1">Network: {isOnBase ? "Base" : `Wrong chain (${chainId})`}</p>
+          <p className="mt-1">Network: {isOnBase ? "Base" : `Switching to Base...`}</p>
         </div>
 
-        {!isOnBase ? (
-          <Button
-            onClick={handleSwitchChain}
-            className="w-full"
-          >
-            Switch to Base Network
-          </Button>
+        {isProcessing ? (
+          <div className="flex items-center justify-center gap-3 py-4">
+            <div className="w-5 h-5 border-2 border-[#4169E1] border-t-transparent rounded-full animate-spin" />
+            <span className="text-gray-600">{displayStatus}</span>
+          </div>
         ) : (
           <Button
-            onClick={handleCreate}
-            disabled={isPending || isConfirming || !salt}
+            onClick={handleCreateClick}
+            disabled={!salt}
             className="w-full"
           >
-            {isPending ? "Waiting for signature..." :
-             isConfirming ? "Creating wallet..." :
-             "Create Wallet"}
+            Create Wallet
           </Button>
         )}
 
         {error && (
-          <p className="text-red-400 text-sm">{error.message}</p>
+          <div className="space-y-2">
+            <p className="text-red-400 text-sm">{error.message}</p>
+            <Button
+              onClick={() => {
+                setAutoCreateTriggered(false);
+                handleCreateClick();
+              }}
+              className="w-full"
+              variant="outline"
+            >
+              Try Again
+            </Button>
+          </div>
         )}
       </CardContent>
     </Card>

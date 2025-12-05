@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAccount, useReadContract } from "wagmi";
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useConnect } from "wagmi";
+import { keccak256, toBytes } from "viem";
+import { base } from "wagmi/chains";
+import { coinbaseWallet } from "wagmi/connectors";
 import {
   HeroSection,
   FeatureCard,
@@ -11,7 +14,8 @@ import {
   CursorClickIcon,
 } from "@/components/landing";
 import { CONTRACTS, FACTORY_ABI } from "@/lib/constants";
-import { clearSavedWallet } from "@/lib/services/wallet";
+import { clearSavedWallet, saveWallet } from "@/lib/services/wallet";
+import { autopilotApi } from "@/lib/api/client";
 
 const FEATURES = [
   {
@@ -39,7 +43,23 @@ const FEATURES = [
 
 export default function LandingPage() {
   const router = useRouter();
-  const { address: ownerAddress, isConnected } = useAccount();
+  const { address: ownerAddress, isConnected, chainId } = useAccount();
+  const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
+  const { connect } = useConnect();
+  const [hasRedirected, setHasRedirected] = useState(false);
+
+  // Track if user clicked "Get Started" and we're waiting for connection
+  const [waitingForConnection, setWaitingForConnection] = useState(false);
+  // Track if we need to switch chain after connection
+  const [needsChainSwitch, setNeedsChainSwitch] = useState(false);
+  // Track if we need to create wallet after chain switch
+  const [needsWalletCreation, setNeedsWalletCreation] = useState(false);
+
+  // Check if on correct chain
+  const isOnBase = chainId === base.id;
+
+  // Generate salt from owner address
+  const salt = ownerAddress ? keccak256(toBytes(ownerAddress)) : null;
 
   // Check on-chain if user has a wallet
   const { data: onChainAccount, isLoading: isCheckingOnChain } = useReadContract({
@@ -52,11 +72,29 @@ export default function LandingPage() {
     },
   });
 
+  // Predict the wallet address
+  const { data: predictedAddress } = useReadContract({
+    address: CONTRACTS.FACTORY,
+    abi: FACTORY_ABI,
+    functionName: "getAddress",
+    args: ownerAddress && salt ? [ownerAddress, salt] : undefined,
+    query: {
+      enabled: !!ownerAddress && !!salt,
+    },
+  });
+
+  const { writeContract, data: hash, isPending, error } = useWriteContract();
+
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash,
+  });
+
   const hasWallet = onChainAccount && onChainAccount !== "0x0000000000000000000000000000000000000000";
 
+  // Redirect if user already has wallet
   useEffect(() => {
-    // If connected and has on-chain wallet, redirect to dashboard
-    if (isConnected && !isCheckingOnChain && hasWallet) {
+    if (isConnected && !isCheckingOnChain && hasWallet && !hasRedirected) {
+      setHasRedirected(true);
       router.push("/dashboard");
     }
 
@@ -64,15 +102,89 @@ export default function LandingPage() {
     if (isConnected && !isCheckingOnChain && !hasWallet) {
       clearSavedWallet();
     }
-  }, [isConnected, isCheckingOnChain, hasWallet, router]);
+  }, [isConnected, isCheckingOnChain, hasWallet, hasRedirected, router]);
 
-  const handleCreateWallet = useCallback(() => {
-    router.push("/create");
-  }, [router]);
+  // Step 2: After user connects, check if we need to switch chain
+  useEffect(() => {
+    if (waitingForConnection && isConnected && !isCheckingOnChain) {
+      setWaitingForConnection(false);
+
+      // If user already has wallet, just redirect
+      if (hasWallet) {
+        router.push("/dashboard");
+        return;
+      }
+
+      // Need to switch to Base?
+      if (!isOnBase) {
+        setNeedsChainSwitch(true);
+        switchChain({ chainId: base.id });
+      } else {
+        // Already on Base, create wallet
+        setNeedsWalletCreation(true);
+      }
+    }
+  }, [waitingForConnection, isConnected, isCheckingOnChain, hasWallet, isOnBase, switchChain, router]);
+
+  // Step 3: After chain switch completes, create wallet
+  useEffect(() => {
+    if (needsChainSwitch && isOnBase && !isSwitchingChain) {
+      setNeedsChainSwitch(false);
+      setNeedsWalletCreation(true);
+    }
+  }, [needsChainSwitch, isOnBase, isSwitchingChain]);
+
+  // Step 4: Create the wallet
+  useEffect(() => {
+    if (needsWalletCreation && salt && !isPending && !hash) {
+      setNeedsWalletCreation(false);
+      writeContract({
+        address: CONTRACTS.FACTORY,
+        abi: FACTORY_ABI,
+        functionName: "createAccount",
+        args: [salt],
+      });
+    }
+  }, [needsWalletCreation, salt, isPending, hash, writeContract]);
+
+  // Step 5: When transaction confirms, save the wallet and redirect
+  useEffect(() => {
+    if (isSuccess && hash && ownerAddress && predictedAddress && !hasRedirected) {
+      saveWallet(predictedAddress as `0x${string}`, ownerAddress);
+
+      // Register with backend for scheduler monitoring
+      autopilotApi.registerWallet(predictedAddress as string, ownerAddress)
+        .catch((err) => console.error("Failed to register wallet with backend:", err));
+
+      setHasRedirected(true);
+      router.push("/dashboard");
+    }
+  }, [isSuccess, hash, ownerAddress, predictedAddress, hasRedirected, router]);
+
+  // Handle the Get Started button click
+  const handleGetStarted = useCallback(() => {
+    // If not connected, connect first
+    if (!isConnected) {
+      setWaitingForConnection(true);
+      connect({ connector: coinbaseWallet({ appName: "Autopilot Wallet", preference: "eoaOnly" }) });
+      return;
+    }
+
+    // Already connected - check if needs chain switch or wallet creation
+    if (!isOnBase) {
+      setNeedsChainSwitch(true);
+      switchChain({ chainId: base.id });
+    } else if (salt && !isPending) {
+      setNeedsWalletCreation(true);
+    }
+  }, [isConnected, isOnBase, salt, isPending, connect, switchChain]);
 
   const handleGoToDashboard = useCallback(() => {
     router.push("/dashboard");
   }, [router]);
+
+  // Determine if we're in a processing state
+  const isProcessing = waitingForConnection || needsChainSwitch || needsWalletCreation || isSwitchingChain || isPending || isConfirming;
 
   // Show loading state while checking wallet status
   if (isConnected && isCheckingOnChain) {
@@ -91,8 +203,11 @@ export default function LandingPage() {
       {/* Hero Section */}
       <HeroSection
         hasWallet={!!hasWallet}
-        onCreateWallet={handleCreateWallet}
+        isConnected={isConnected}
+        onGetStarted={handleGetStarted}
         onGoToDashboard={handleGoToDashboard}
+        isCreating={isProcessing}
+        error={error?.message}
       />
 
       {/* Why Autopilot Section */}
