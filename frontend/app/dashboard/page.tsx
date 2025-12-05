@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { useAccount, useReadContract } from "wagmi";
+import { useAccount, useReadContract, useSignMessage } from "wagmi";
 import { CONTRACTS, FACTORY_ABI, MODULE_ABI } from "@/lib/constants";
 import { getSavedWallet, clearSavedWallet } from "@/lib/services/wallet";
+import { prepareSend, submitSigned } from "@/lib/api/client";
 
 type SendStatus = "idle" | "loading" | "success" | "error";
 
@@ -31,6 +32,9 @@ export default function DashboardPage() {
 
   // Get saved wallet from localStorage
   const savedWallet = typeof window !== "undefined" ? getSavedWallet() : null;
+
+  // Hook for signing messages
+  const { signMessageAsync } = useSignMessage();
 
   // Verify wallet exists on-chain
   const { data: onChainAccount, isLoading: isCheckingOnChain } = useReadContract({
@@ -137,32 +141,43 @@ export default function DashboardPage() {
   };
 
   const handleSend = async () => {
-    if (!canSend) return;
+    if (!canSend || !smartWalletAddress) return;
 
     setSendStatus("loading");
 
-    // Simulate network request
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      // 1. Backend prepares UserOp with paymaster data
+      const { userOp, userOpHash } = await prepareSend({
+        walletAddress: smartWalletAddress,
+        recipient,
+        amount: Math.floor(amountNum * 1e6).toString(), // USDC has 6 decimals
+      });
 
-    // Simulate 90% success rate
-    const isSuccess = Math.random() > 0.1;
+      // 2. User signs the UserOp hash (ONE wallet popup)
+      const signature = await signMessageAsync({
+        message: { raw: userOpHash as `0x${string}` },
+      });
 
-    if (isSuccess) {
+      // 3. Submit signed UserOp to bundler
+      await submitSigned({ userOp, signature });
+
       setSendStatus("success");
       setToast({
-        message: `Successfully sent ${amount} USDC to ${recipient.slice(0, 6)}...${recipient.slice(-4)}`,
+        message: `Sent ${amount} USDC to ${recipient.slice(0, 6)}...${recipient.slice(-4)}`,
         type: "success",
       });
       setRecipient("");
       setAmount("");
       setRecipientTouched(false);
-      setTimeout(() => setSendStatus("idle"), 100);
-    } else {
+    } catch (err: unknown) {
+      console.error("Send failed:", err);
       setSendStatus("error");
+      const message = err instanceof Error ? err.message : "Transaction failed. Please try again.";
       setToast({
-        message: "Transaction failed. Please try again.",
+        message,
         type: "error",
       });
+    } finally {
       setTimeout(() => setSendStatus("idle"), 100);
     }
   };

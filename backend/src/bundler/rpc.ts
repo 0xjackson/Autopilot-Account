@@ -1,6 +1,6 @@
 import { createPublicClient, http, toHex, type Hex, type Address } from "viem";
 import { base } from "viem/chains";
-import { CONTRACTS, ENTRYPOINT_ABI } from "./constants";
+import { CONTRACTS, ENTRYPOINT_ABI, CHAIN_ID } from "./constants";
 import { getNonceKey } from "./userOp";
 
 const PIMLICO_API_KEY = process.env.PIMLICO_API_KEY;
@@ -93,6 +93,47 @@ export async function getNonce(walletAddress: Address): Promise<bigint> {
     functionName: "getNonce",
     args: [walletAddress, key],
   });
+}
+
+// Get nonce using ECDSA validator (for user-signed ops)
+export async function getNonceForEcdsa(walletAddress: Address): Promise<bigint> {
+  const key = getNonceKey(CONTRACTS.ECDSA_VALIDATOR);
+  return publicClient.readContract({
+    address: CONTRACTS.ENTRYPOINT,
+    abi: ENTRYPOINT_ABI,
+    functionName: "getNonce",
+    args: [walletAddress, key],
+  });
+}
+
+// Get paymaster data without requiring signature
+export async function getPaymasterData(
+  userOp: {
+    sender: Address;
+    nonce: Hex;
+    factory: Address | null;
+    factoryData: Hex | null;
+    callData: Hex;
+    callGasLimit: Hex;
+    verificationGasLimit: Hex;
+    preVerificationGas: Hex;
+    maxFeePerGas: Hex;
+    maxPriorityFeePerGas: Hex;
+    paymaster: Address | null;
+    paymasterVerificationGasLimit: Hex | null;
+    paymasterPostOpGasLimit: Hex | null;
+    paymasterData: Hex | null;
+  }
+): Promise<{ paymaster: Address; paymasterData: Hex }> {
+  return pimlicoRpc<{ paymaster: Address; paymasterData: Hex }>(
+    "pm_getPaymasterData",
+    [
+      userOp,
+      CONTRACTS.ENTRYPOINT,
+      toHex(CHAIN_ID),
+      null, // context - null for sponsorship
+    ]
+  );
 }
 
 export async function getGasPrices(): Promise<{

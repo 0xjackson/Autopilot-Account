@@ -399,4 +399,50 @@ export const autopilotApi: AutopilotAPI = {
   registerWallet,
 };
 
+// ============================================================================
+// User Send Operations (UserOp-based flow)
+// ============================================================================
+
+export type PrepareSendParams = {
+  walletAddress: string;
+  recipient: string;
+  amount: string;
+  token?: string;
+};
+
+export type PrepareSendResponse = {
+  userOp: Record<string, unknown>;
+  userOpHash: string;
+};
+
+export type SubmitSignedParams = {
+  userOp: Record<string, unknown>;
+  signature: string;
+};
+
+export type SubmitSignedResponse = {
+  hash: string;
+  txHash: string;
+};
+
+// Prepare a send UserOp
+export async function prepareSend(params: PrepareSendParams): Promise<PrepareSendResponse> {
+  try {
+    const response = await axiosInstance.post<PrepareSendResponse>("/ops/prepare-send", params);
+    return response.data;
+  } catch (error) {
+    unwrapServerError(error);
+  }
+}
+
+// Submit a signed UserOp
+export async function submitSigned(params: SubmitSignedParams): Promise<SubmitSignedResponse> {
+  try {
+    const response = await axiosInstance.post<SubmitSignedResponse>("/ops/submit-signed", params);
+    return response.data;
+  } catch (error) {
+    unwrapServerError(error);
+  }
+}
+
 export default autopilotApi;
