@@ -19,7 +19,6 @@ import {
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/send", label: "Send" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -27,10 +26,10 @@ export function Navigation() {
   const pathname = usePathname();
 
   return (
-    <nav className="bg-gray-900 border-b border-gray-800">
+    <nav className="bg-white border-b border-gray-200 shadow-sm">
       <div className="max-w-6xl mx-auto px-4">
         <div className="flex items-center justify-between h-16">
-          <Link href="/" className="text-xl font-bold text-white">
+          <Link href="/" className="text-xl font-bold text-[#4169E1]">
             Autopilot Wallet
           </Link>
           <div className="flex items-center space-x-4">
@@ -40,15 +39,15 @@ export function Navigation() {
                 href={item.href}
                 className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   pathname === item.href
-                    ? "bg-gray-800 text-white"
-                    : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                    ? "bg-[#4169E1] text-white"
+                    : "text-gray-700 hover:bg-[#4169E1]/10 hover:text-[#4169E1]"
                 }`}
               >
                 {item.label}
               </Link>
             ))}
             <Wallet>
-              <ConnectWallet className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+              <ConnectWallet className="bg-[#4169E1] hover:bg-[#4169E1]/90 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                 <Avatar className="h-5 w-5" />
                 <Name />
               </ConnectWallet>

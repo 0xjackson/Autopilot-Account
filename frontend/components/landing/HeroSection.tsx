@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+import { PilotMascot } from "./PilotMascot";
 
 interface HeroSectionProps {
   hasWallet: boolean;
-  onCreateWallet: () => Promise<void>;
+  onCreateWallet: () => void | Promise<void>;
   onGoToDashboard: () => void;
 }
 
@@ -35,112 +36,123 @@ export function HeroSection({
   };
 
   return (
-    <section className="relative flex flex-col items-center justify-center text-center py-16 md:py-24">
-      {/* Background gradient effect */}
+    <section className="relative flex flex-col items-center justify-center text-center py-12 md:py-20">
+      {/* Subtle background accent */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-500/10 rounded-full blur-[120px]" />
-        <div className="absolute top-1/3 left-1/4 w-[400px] h-[400px] bg-purple-500/5 rounded-full blur-[100px]" />
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#4169E1]/5 rounded-full blur-[100px]" />
+        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-[#4169E1]/3 rounded-full blur-[80px]" />
       </div>
 
       {/* Content */}
-      <div className="relative z-10 space-y-6 max-w-3xl mx-auto px-4">
-        {/* Main tagline with animation */}
-        <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight animate-fade-in">
-          <span className="block text-white">Your money works</span>
-          <span className="block bg-gradient-to-r from-blue-400 via-blue-500 to-purple-500 bg-clip-text text-transparent">
-            while you sleep
-          </span>
-        </h1>
+      <div className="relative z-10 w-full max-w-5xl mx-auto px-4">
+        <div className="flex flex-col lg:flex-row items-center gap-8 lg:gap-12">
+          {/* Text content */}
+          <div className="flex-1 space-y-6 text-center lg:text-left">
+            {/* Main tagline with animation */}
+            <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight animate-fade-in">
+              <span className="block text-gray-900">Never let your</span>
+              <span className="block text-[#4169E1]">
+                money sleep
+              </span>
+            </h1>
 
-        {/* Subheading */}
-        <p className="text-lg sm:text-xl md:text-2xl text-gray-400 max-w-2xl mx-auto leading-relaxed animate-fade-in-delay">
-          A smart wallet that automatically optimizes your idle capital.
-          Set your spending balance, and let the rest earn yield automatically.
-        </p>
+            {/* Subheading */}
+            <p className="text-lg sm:text-xl text-gray-600 max-w-xl mx-auto lg:mx-0 leading-relaxed animate-fade-in-delay">
+              A smart wallet that automatically puts your idle capital to work.
+              Set your spending balance, and watch the rest earn yield on autopilot.
+            </p>
 
-        {/* CTA Section */}
-        <div className="pt-6 animate-fade-in-delay-2">
-          {isSuccess ? (
-            <Alert variant="success" className="max-w-md mx-auto">
-              <CheckCircleIcon className="h-5 w-5" />
-              <AlertTitle>Wallet Created!</AlertTitle>
-              <AlertDescription>
-                Your Autopilot wallet is ready. Redirecting to dashboard...
-              </AlertDescription>
-            </Alert>
-          ) : error ? (
-            <div className="space-y-4">
-              <Alert variant="destructive" className="max-w-md mx-auto">
-                <AlertTitle>Error</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-              <Button
-                size="lg"
-                onClick={handleCreateWallet}
-                disabled={isCreating}
-                className="h-14 px-10 text-lg"
-              >
-                Try Again
-              </Button>
-            </div>
-          ) : hasWallet ? (
-            <div className="space-y-4">
-              <Button
-                size="lg"
-                onClick={onGoToDashboard}
-                className={cn(
-                  "h-14 px-10 text-lg font-semibold",
-                  "bg-gradient-to-r from-blue-600 to-blue-700",
-                  "hover:from-blue-500 hover:to-blue-600",
-                  "shadow-lg shadow-blue-500/25",
-                  "transition-all duration-300 hover:scale-105 hover:shadow-blue-500/40"
-                )}
-              >
-                Go to Dashboard
-              </Button>
-              <p className="text-sm text-gray-500">
-                You already have an Autopilot wallet
-              </p>
-            </div>
-          ) : (
-            <Button
-              size="lg"
-              onClick={handleCreateWallet}
-              disabled={isCreating}
-              className={cn(
-                "h-16 px-12 text-xl font-semibold",
-                "bg-gradient-to-r from-blue-600 via-blue-500 to-purple-600",
-                "hover:from-blue-500 hover:via-blue-400 hover:to-purple-500",
-                "shadow-xl shadow-blue-500/30",
-                "transition-all duration-300 hover:scale-105 hover:shadow-blue-500/50",
-                "border border-blue-400/20"
-              )}
-            >
-              {isCreating ? (
-                <span className="flex items-center gap-3">
-                  <Spinner size="sm" />
-                  Creating Wallet...
-                </span>
+            {/* CTA Section */}
+            <div className="pt-4 animate-fade-in-delay-2">
+              {isSuccess ? (
+                <Alert variant="success" className="max-w-md mx-auto lg:mx-0">
+                  <CheckCircleIcon className="h-5 w-5" />
+                  <AlertTitle>Wallet Created!</AlertTitle>
+                  <AlertDescription>
+                    Your Autopilot wallet is ready. Redirecting to dashboard...
+                  </AlertDescription>
+                </Alert>
+              ) : error ? (
+                <div className="space-y-4">
+                  <Alert variant="destructive" className="max-w-md mx-auto lg:mx-0">
+                    <AlertTitle>Error</AlertTitle>
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                  <Button
+                    size="lg"
+                    onClick={handleCreateWallet}
+                    disabled={isCreating}
+                    className="h-14 px-10 text-lg bg-[#4169E1] hover:bg-[#4169E1]/90 text-white"
+                  >
+                    Try Again
+                  </Button>
+                </div>
+              ) : hasWallet ? (
+                <div className="space-y-4">
+                  <Button
+                    size="lg"
+                    onClick={onGoToDashboard}
+                    className={cn(
+                      "h-14 px-10 text-lg font-semibold",
+                      "bg-[#4169E1] hover:bg-[#4169E1]/90",
+                      "text-white",
+                      "shadow-lg shadow-[#4169E1]/25",
+                      "transition-all duration-300 hover:scale-105 hover:shadow-[#4169E1]/40"
+                    )}
+                  >
+                    Go to Dashboard
+                  </Button>
+                  <p className="text-sm text-gray-500">
+                    You already have an Autopilot wallet
+                  </p>
+                </div>
               ) : (
-                "Create Wallet"
+                <Button
+                  size="lg"
+                  onClick={handleCreateWallet}
+                  disabled={isCreating}
+                  className={cn(
+                    "h-16 px-12 text-xl font-semibold",
+                    "bg-[#4169E1] hover:bg-[#4169E1]/90",
+                    "text-white",
+                    "shadow-xl shadow-[#4169E1]/30",
+                    "transition-all duration-300 hover:scale-105 hover:shadow-[#4169E1]/50"
+                  )}
+                >
+                  {isCreating ? (
+                    <span className="flex items-center gap-3">
+                      <Spinner size="sm" />
+                      Creating Wallet...
+                    </span>
+                  ) : (
+                    "Get Started"
+                  )}
+                </Button>
               )}
-            </Button>
-          )}
-        </div>
+            </div>
 
-        {/* Trust indicators */}
-        <div className="pt-8 flex flex-wrap items-center justify-center gap-6 text-sm text-gray-500 animate-fade-in-delay-3">
-          <div className="flex items-center gap-2">
-            <ShieldIcon className="h-4 w-4 text-green-500" />
-            <span>Self-custodial</span>
+            {/* Trust indicators */}
+            <div className="pt-6 flex flex-wrap items-center justify-center lg:justify-start gap-6 text-sm text-gray-500 animate-fade-in-delay-3">
+              <div className="flex items-center gap-2">
+                <ShieldIcon className="h-4 w-4 text-green-600" />
+                <span>Self-custodial</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <LayersIcon className="h-4 w-4 text-[#4169E1]" />
+                <span>Built on Base</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <LockIcon className="h-4 w-4 text-gray-700" />
+                <span>ERC-4337</span>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <LayersIcon className="h-4 w-4 text-blue-500" />
-            <span>Built on Base</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <LockIcon className="h-4 w-4 text-purple-500" />
-            <span>ERC-4337</span>
+
+          {/* Pilot Mascot */}
+          <div className="flex-shrink-0 animate-fade-in-delay">
+            <div className="animate-float">
+              <PilotMascot size="lg" />
+            </div>
           </div>
         </div>
       </div>

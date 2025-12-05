@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useAccount, useReadContract } from "wagmi";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,24 +12,18 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  autopilotApi,
+  WalletSettings,
+  ApiError,
+  ValidationErrorResponse,
+} from "@/lib/api/client";
+import { CONTRACTS, FACTORY_ABI } from "@/lib/constants";
+import { getSavedWallet } from "@/lib/services/wallet";
 
-// Types for settings
-export interface TokenYieldConfig {
-  enabled: boolean;
-}
-
-export interface WalletSettings {
-  checkingThreshold: string;
-  autoYieldTokens: {
-    USDC: TokenYieldConfig;
-    WETH: TokenYieldConfig;
-  };
-  dustConsolidationToken: "USDC" | "WETH" | "ETH";
-  dustSweepEnabled: boolean;
-  dustThreshold: string;
-  riskTolerance: number; // 1-5 scale
-  yieldStrategy: string;
-}
+// Re-export types for backwards compatibility
+export type { WalletSettings };
+export type TokenYieldConfig = { enabled: boolean };
 
 const SETTINGS_STORAGE_KEY = "autopilot-wallet-settings";
 
@@ -42,7 +37,7 @@ const defaultSettings: WalletSettings = {
   dustSweepEnabled: true,
   dustThreshold: "1.00",
   riskTolerance: 3,
-  yieldStrategy: "aerodrome",
+  yieldStrategy: "mock",
 };
 
 const consolidationTokenOptions = [
@@ -51,48 +46,123 @@ const consolidationTokenOptions = [
   { value: "ETH", label: "ETH (Native Ether)" },
 ] as const;
 
-const yieldStrategyOptions = [
-  { value: "aerodrome", label: "Aerodrome USDC Vault", apy: "4.2%" },
-  { value: "beefy", label: "Beefy Finance Vault", apy: "3.8%" },
-  { value: "mock", label: "Mock Vault (Demo)", apy: "5.0%" },
-] as const;
-
-const riskLabels = ["Very Low", "Low", "Medium", "High", "Very High"];
 
 export function SettingsForm() {
   const [settings, setSettings] = useState<WalletSettings>(defaultSettings);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
-  // Load settings from localStorage on mount
-  useEffect(() => {
-    const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as WalletSettings;
-        setSettings(parsed);
-      } catch {
-        // If parsing fails, use defaults
-        setSettings(defaultSettings);
+  // Get connected wallet address
+  const { address: ownerAddress, isConnected } = useAccount();
+
+  // Get saved wallet from localStorage
+  const savedWallet = typeof window !== "undefined" ? getSavedWallet() : null;
+
+  // Get smart wallet address from factory contract
+  const { data: onChainAccount } = useReadContract({
+    address: CONTRACTS.FACTORY,
+    abi: FACTORY_ABI,
+    functionName: "accountOf",
+    args: ownerAddress ? [ownerAddress] : undefined,
+    query: {
+      enabled: !!ownerAddress,
+    },
+  });
+
+  // Determine the smart wallet address
+  const smartWalletAddress =
+    onChainAccount && onChainAccount !== "0x0000000000000000000000000000000000000000"
+      ? onChainAccount
+      : savedWallet?.address;
+
+  // Load settings from backend on mount (with localStorage fallback)
+  const loadSettings = useCallback(async () => {
+    if (!smartWalletAddress) {
+      // No wallet - try localStorage as fallback for cached settings
+      const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as WalletSettings;
+          setSettings(parsed);
+        } catch {
+          setSettings(defaultSettings);
+        }
       }
+      setIsLoading(false);
+      return;
     }
-    setIsLoaded(true);
-  }, []);
 
-  const handleSave = () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await autopilotApi.getWalletSettings(smartWalletAddress);
+      setSettings(response.settings);
+      // Cache to localStorage for instant feedback on next load
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(response.settings));
+    } catch (err) {
+      console.error("Failed to load settings from backend:", err);
+      // Fall back to localStorage
+      const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as WalletSettings;
+          setSettings(parsed);
+        } catch {
+          setSettings(defaultSettings);
+        }
+      }
+      // Don't show error for initial load - just use defaults/cache
+    } finally {
+      setIsLoading(false);
+    }
+  }, [smartWalletAddress]);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
+
+  const handleSave = async () => {
     setIsSaving(true);
     setShowSuccess(false);
+    setError(null);
+    setValidationErrors([]);
 
-    // Save to localStorage
-    setTimeout(() => {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    // Always save to localStorage for instant local feedback
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+
+    // If no wallet, just save locally
+    if (!smartWalletAddress) {
       setIsSaving(false);
       setShowSuccess(true);
-
-      // Hide success message after 3 seconds
       setTimeout(() => setShowSuccess(false), 3000);
-    }, 500);
+      return;
+    }
+
+    try {
+      await autopilotApi.saveWalletSettings(smartWalletAddress, settings);
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) {
+      console.error("Failed to save settings to backend:", err);
+
+      if (err instanceof ApiError) {
+        // Check for validation errors
+        const responseData = err.originalError?.response?.data as ValidationErrorResponse | undefined;
+        if (responseData?.validationErrors) {
+          setValidationErrors(responseData.validationErrors.map((e) => `${e.field}: ${e.message}`));
+        } else {
+          setError(err.message);
+        }
+      } else {
+        setError("Failed to save settings. Please try again.");
+      }
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const updateTokenYield = (token: "USDC" | "WETH", enabled: boolean) => {
@@ -105,23 +175,70 @@ export function SettingsForm() {
     }));
   };
 
-  // Don't render until settings are loaded from localStorage
-  if (!isLoaded) {
+  // Show loading state
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="text-gray-400">Loading settings...</div>
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-[#4169E1] border-t-transparent rounded-full animate-spin" />
+          <span className="text-gray-600">Loading settings...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Show prompt if no wallet is connected
+  if (!isConnected) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-600 mb-4">Please connect your wallet to manage settings.</p>
+        <Button asChild className="bg-[#4169E1] hover:bg-[#4169E1]/90 text-white">
+          <Link href="/">Connect Wallet</Link>
+        </Button>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      {/* No wallet warning */}
+      {!smartWalletAddress && (
+        <Alert>
+          <AlertTitle>No Autopilot Wallet</AlertTitle>
+          <AlertDescription>
+            Settings are saved locally. Create an Autopilot Wallet to sync settings to the backend.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Success Alert */}
       {showSuccess && (
         <Alert variant="success">
           <AlertTitle>Settings Saved</AlertTitle>
           <AlertDescription>
             Your wallet preferences have been updated successfully.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Error Alert */}
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Validation Errors */}
+      {validationErrors.length > 0 && (
+        <Alert variant="destructive">
+          <AlertTitle>Validation Error</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc list-inside">
+              {validationErrors.map((err, i) => (
+                <li key={i}>{err}</li>
+              ))}
+            </ul>
           </AlertDescription>
         </Alert>
       )}
@@ -136,7 +253,7 @@ export function SettingsForm() {
         </CardHeader>
         <CardContent>
           <div className="flex items-center space-x-3">
-            <span className="text-gray-400">$</span>
+            <span className="text-gray-500">$</span>
             <input
               type="number"
               min="0"
@@ -145,9 +262,9 @@ export function SettingsForm() {
               onChange={(e) =>
                 setSettings({ ...settings, checkingThreshold: e.target.value })
               }
-              className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white w-32 focus:outline-none focus:border-blue-500"
+              className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-900 w-32 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1]"
             />
-            <span className="text-gray-400">USDC</span>
+            <span className="text-gray-500">USDC</span>
           </div>
         </CardContent>
       </Card>
@@ -165,12 +282,12 @@ export function SettingsForm() {
           {/* USDC Toggle */}
           <div className="flex items-center justify-between py-2">
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-xs font-bold">
+              <div className="w-8 h-8 bg-[#4169E1] rounded-full flex items-center justify-center text-xs font-bold text-white">
                 $
               </div>
               <div>
-                <p className="font-medium">USDC</p>
-                <p className="text-gray-400 text-sm">USD Coin</p>
+                <p className="font-medium text-gray-900">USDC</p>
+                <p className="text-gray-500 text-sm">USD Coin</p>
               </div>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -180,30 +297,13 @@ export function SettingsForm() {
                 onChange={(e) => updateTokenYield("USDC", e.target.checked)}
                 className="sr-only peer"
               />
-              <div className="w-14 h-7 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
+              <div className="w-14 h-7 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-[#4169E1]"></div>
             </label>
           </div>
 
-          {/* WETH Toggle */}
-          <div className="flex items-center justify-between py-2 border-t border-gray-800 pt-4">
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-xs font-bold">
-                W
-              </div>
-              <div>
-                <p className="font-medium">WETH</p>
-                <p className="text-gray-400 text-sm">Wrapped Ether</p>
-              </div>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={settings.autoYieldTokens.WETH.enabled}
-                onChange={(e) => updateTokenYield("WETH", e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-14 h-7 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
+          {/* More Coming Soon */}
+          <div className="border-t border-gray-200 pt-4">
+            <p className="text-gray-500 text-sm italic">More tokens coming soon...</p>
           </div>
         </CardContent>
       </Card>
@@ -227,15 +327,15 @@ export function SettingsForm() {
                 }
                 className="sr-only peer"
               />
-              <div className="w-14 h-7 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
+              <div className="w-14 h-7 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-7 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-[#4169E1]"></div>
             </label>
           </div>
         </CardHeader>
         {settings.dustSweepEnabled && (
-          <CardContent className="space-y-4 border-t border-gray-800 pt-4">
+          <CardContent className="space-y-4 border-t border-gray-200 pt-4">
             {/* Consolidation Token Dropdown */}
             <div>
-              <label className="text-gray-400 text-sm block mb-2">
+              <label className="text-gray-600 text-sm block mb-2">
                 Consolidation Token
               </label>
               <select
@@ -249,7 +349,7 @@ export function SettingsForm() {
                       | "ETH",
                   })
                 }
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded-lg px-4 py-3 text-gray-900 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1]"
               >
                 {consolidationTokenOptions.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -264,11 +364,11 @@ export function SettingsForm() {
 
             {/* Dust Threshold */}
             <div>
-              <label className="text-gray-400 text-sm block mb-2">
+              <label className="text-gray-600 text-sm block mb-2">
                 Dust Threshold (sweep tokens below this USD value)
               </label>
               <div className="flex items-center space-x-3">
-                <span className="text-gray-400">$</span>
+                <span className="text-gray-500">$</span>
                 <input
                   type="number"
                   min="0"
@@ -277,7 +377,7 @@ export function SettingsForm() {
                   onChange={(e) =>
                     setSettings({ ...settings, dustThreshold: e.target.value })
                   }
-                  className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white w-32 focus:outline-none focus:border-blue-500"
+                  className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-900 w-32 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1]"
                 />
               </div>
             </div>
@@ -285,89 +385,17 @@ export function SettingsForm() {
         )}
       </Card>
 
-      {/* Risk Tolerance Slider */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Risk Tolerance</CardTitle>
-          <CardDescription>
-            Adjust your preferred risk level for yield strategies
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <input
-              type="range"
-              min="1"
-              max="5"
-              value={settings.riskTolerance}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  riskTolerance: parseInt(e.target.value),
-                })
-              }
-              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
-            />
-            <div className="flex justify-between text-xs text-gray-400">
-              {riskLabels.map((label, index) => (
-                <span
-                  key={label}
-                  className={
-                    settings.riskTolerance === index + 1
-                      ? "text-blue-400 font-medium"
-                      : ""
-                  }
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-            <p className="text-center text-sm">
-              Current:{" "}
-              <span className="text-blue-400 font-medium">
-                {riskLabels[settings.riskTolerance - 1]}
-              </span>
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Yield Strategy Selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Yield Strategy</CardTitle>
-          <CardDescription>
-            Select which vault to use for yield generation
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <select
-            value={settings.yieldStrategy}
-            onChange={(e) =>
-              setSettings({ ...settings, yieldStrategy: e.target.value })
-            }
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
-          >
-            {yieldStrategyOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label} ({option.apy} APY)
-              </option>
-            ))}
-          </select>
-        </CardContent>
-      </Card>
-
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-4">
         <Button
           onClick={handleSave}
           disabled={isSaving}
-          className="flex-1"
+          className="flex-1 bg-[#4169E1] hover:bg-[#4169E1]/90 text-white"
           size="lg"
         >
           {isSaving ? "Saving..." : "Save Settings"}
         </Button>
-        <Button variant="outline" size="lg" asChild>
+        <Button variant="outline" size="lg" asChild className="border-gray-300 text-gray-700 hover:bg-gray-50">
           <Link href="/dashboard">Back to Dashboard</Link>
         </Button>
       </div>
