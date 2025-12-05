@@ -168,36 +168,24 @@ contract AutomationValidator is IModule {
 
     /**
      * @dev Check if the callData targets an allowed function
+     * Parses Kernel v3 ERC-7579 execute(bytes32 mode, bytes executionCalldata)
      */
     function _isAllowedCall(
         address account,
         bytes calldata callData
     ) internal view returns (bool) {
-        if (callData.length < 100) {
+        if (callData.length < 156) {
             return false;
         }
 
         bytes4 executeSelector = bytes4(callData[:4]);
 
-        if (executeSelector != bytes4(0xb61d27f6)) {
+        if (executeSelector != bytes4(0xe9ae5c53)) {
             return false;
         }
 
-        address target = address(uint160(uint256(bytes32(callData[4:36]))));
-
-        uint256 dataOffset = uint256(bytes32(callData[68:100]));
-        uint256 dataStart = 4 + dataOffset;
-
-        if (callData.length < dataStart + 32) {
-            return false;
-        }
-
-        uint256 dataLength = uint256(bytes32(callData[dataStart:dataStart + 32]));
-        if (dataLength < 4) {
-            return false;
-        }
-
-        bytes4 innerSelector = bytes4(callData[dataStart + 32:dataStart + 36]);
+        address target = address(bytes20(callData[100:120]));
+        bytes4 innerSelector = bytes4(callData[152:156]);
 
         return allowedSelectors[account][target][innerSelector];
     }
