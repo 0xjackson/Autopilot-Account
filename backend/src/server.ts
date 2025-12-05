@@ -325,6 +325,7 @@ app.get("/", (_req: Request, res: Response) => {
       "/register",
       "/wallets",
       "/wallet/:address",
+      "/wallet/by-owner/:owner",
       "/wallet/:address/summary",
       "/wallet/:address/settings",
       "/strategies",
@@ -433,6 +434,37 @@ app.get("/wallet/:address", (req: Request, res: Response) => {
   }
 
   return res.json(wallet);
+});
+
+/**
+ * GET /wallet/by-owner/:owner
+ * Get the wallet registered to a specific owner address
+ */
+app.get("/wallet/by-owner/:owner", (req: Request, res: Response) => {
+  const owner = req.params.owner.toLowerCase();
+
+  // Validate owner address format
+  if (!isValidWalletAddress(owner)) {
+    const errorResponse: ErrorResponse = {
+      error:
+        "Invalid owner address format. Must be 0x followed by 40 hex characters.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  // Find wallet by owner
+  const wallet = Array.from(walletRegistry.values()).find(
+    (w) => w.owner === owner
+  );
+
+  if (!wallet) {
+    const errorResponse: ErrorResponse = {
+      error: "Wallet not found",
+    };
+    return res.status(404).json(errorResponse);
+  }
+
+  return res.status(200).json(wallet);
 });
 
 /**

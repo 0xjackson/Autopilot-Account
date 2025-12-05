@@ -146,6 +146,12 @@ export type RegisterWalletResponse = {
   wallet: string;
 };
 
+export type RegisteredWallet = {
+  wallet: string;
+  owner: string;
+  createdAt: string;
+};
+
 // ============================================================================
 // Wallet Settings Types
 // ============================================================================
@@ -284,6 +290,7 @@ export interface AutopilotAPI {
   getWalletSettings(wallet: string): Promise<WalletSettingsResponse>;
   saveWalletSettings(wallet: string, settings: WalletSettingsInput): Promise<WalletSettingsResponse>;
   registerWallet(wallet: string, owner: string): Promise<RegisterWalletResponse>;
+  getWalletByOwner(owner: string): Promise<RegisteredWallet>;
 }
 
 async function pay(request: PayRequest): Promise<PayResponse> {
@@ -384,6 +391,17 @@ async function registerWallet(
   }
 }
 
+async function getWalletByOwner(owner: string): Promise<RegisteredWallet> {
+  try {
+    const response = await axiosInstance.get<RegisteredWallet>(
+      `/wallet/by-owner/${encodeURIComponent(owner)}`
+    );
+    return response.data;
+  } catch (error) {
+    unwrapServerError(error);
+  }
+}
+
 // ============================================================================
 // Exported API Object
 // ============================================================================
@@ -397,6 +415,7 @@ export const autopilotApi: AutopilotAPI = {
   getWalletSettings,
   saveWalletSettings,
   registerWallet,
+  getWalletByOwner,
 };
 
 // ============================================================================
