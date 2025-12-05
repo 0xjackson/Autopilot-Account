@@ -196,10 +196,15 @@ export async function prepareUserSendOp(
   });
 
   // 2. Build executeWithAutoYield calldata
+  // Parameters:
+  //   - token: the token being spent (for balance checking/withdrawing from yield)
+  //   - to: the TARGET CONTRACT to call (USDC contract for ERC20.transfer)
+  //   - value: ETH value to send (0 for ERC20 transfers)
+  //   - data: the calldata to execute (ERC20 transfer with recipient + amount)
   const moduleCallData = encodeFunctionData({
     abi: AUTO_YIELD_MODULE_ABI,
     functionName: "executeWithAutoYield",
-    args: [token, recipient, amount, transferCalldata],
+    args: [token, token, 0n, transferCalldata], // 'to' is the token contract, value is 0
   });
 
   // 3. Build Kernel execute calldata
