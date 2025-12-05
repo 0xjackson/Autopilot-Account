@@ -141,6 +141,11 @@ export type ErrorResponse = {
   error: string;
 };
 
+export type RegisterWalletResponse = {
+  ok: boolean;
+  wallet: string;
+};
+
 // ============================================================================
 // Wallet Settings Types
 // ============================================================================
@@ -278,6 +283,7 @@ export interface AutopilotAPI {
   getWalletSummary(wallet: string, params?: GetWalletSummaryParams): Promise<WalletSummaryResponse>;
   getWalletSettings(wallet: string): Promise<WalletSettingsResponse>;
   saveWalletSettings(wallet: string, settings: WalletSettingsInput): Promise<WalletSettingsResponse>;
+  registerWallet(wallet: string, owner: string): Promise<RegisterWalletResponse>;
 }
 
 async function pay(request: PayRequest): Promise<PayResponse> {
@@ -363,6 +369,21 @@ async function saveWalletSettings(
   }
 }
 
+async function registerWallet(
+  wallet: string,
+  owner: string
+): Promise<RegisterWalletResponse> {
+  try {
+    const response = await axiosInstance.post<RegisterWalletResponse>(
+      "/register",
+      { wallet, owner }
+    );
+    return response.data;
+  } catch (error) {
+    unwrapServerError(error);
+  }
+}
+
 // ============================================================================
 // Exported API Object
 // ============================================================================
@@ -375,6 +396,7 @@ export const autopilotApi: AutopilotAPI = {
   getWalletSummary,
   getWalletSettings,
   saveWalletSettings,
+  registerWallet,
 };
 
 export default autopilotApi;
