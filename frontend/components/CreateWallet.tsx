@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useSwitchChain } from "wagmi";
 import { keccak256, toBytes } from "viem";
 import { base } from "wagmi/chains";
@@ -11,6 +12,7 @@ import { saveWallet } from "@/lib/services/wallet";
 import { autopilotApi } from "@/lib/api/client";
 
 export function CreateWallet() {
+  const router = useRouter();
   const { address: ownerAddress, isConnected, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
   const [hasRedirected, setHasRedirected] = useState(false);
@@ -59,9 +61,9 @@ export function CreateWallet() {
         .catch((err) => console.error("Failed to register wallet with backend:", err));
 
       setHasRedirected(true);
-      window.location.href = "/dashboard";
+      router.push("/dashboard");
     }
-  }, [existingAccount, ownerAddress, hasRedirected]);
+  }, [existingAccount, ownerAddress, hasRedirected, router]);
 
   // Switch to Base network
   const handleSwitchChain = () => {
@@ -90,9 +92,9 @@ export function CreateWallet() {
         .catch((err) => console.error("Failed to register wallet with backend:", err));
 
       setHasRedirected(true);
-      window.location.href = "/dashboard";
+      router.push("/dashboard");
     }
-  }, [isSuccess, hash, ownerAddress, predictedAddress, hasRedirected]);
+  }, [isSuccess, hash, ownerAddress, predictedAddress, hasRedirected, router]);
 
   if (!isConnected) {
     return (
