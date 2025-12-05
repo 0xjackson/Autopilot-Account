@@ -38,9 +38,8 @@ const MAX_ERROR_COUNT = 5;
 
 function isBundlerConfigured(): boolean {
   return !!(
-    process.env.CDP_BUNDLER_URL &&
-    process.env.AUTOMATION_PRIVATE_KEY &&
-    process.env.AUTO_YIELD_MODULE_ADDRESS
+    process.env.PIMLICO_API_KEY &&
+    process.env.AUTOMATION_PRIVATE_KEY
   );
 }
 
@@ -387,13 +386,11 @@ export function startScheduler(options?: {
   bundlerEnabled = isBundlerConfigured();
 
   if (bundlerEnabled) {
-    log("start", `Bundler ENABLED - will submit real UserOperations to CDP`);
-    log("start", `  AUTO_YIELD_MODULE_ADDRESS: ${process.env.AUTO_YIELD_MODULE_ADDRESS}`);
+    log("start", `Bundler ENABLED - will submit real UserOperations via Pimlico`);
   } else {
     log("start", `WARNING: Bundler NOT configured - running in SIMULATION mode`);
-    if (!process.env.CDP_BUNDLER_URL) log("start", `  Missing: CDP_BUNDLER_URL`);
+    if (!process.env.PIMLICO_API_KEY) log("start", `  Missing: PIMLICO_API_KEY`);
     if (!process.env.AUTOMATION_PRIVATE_KEY) log("start", `  Missing: AUTOMATION_PRIVATE_KEY`);
-    if (!process.env.AUTO_YIELD_MODULE_ADDRESS) log("start", `  Missing: AUTO_YIELD_MODULE_ADDRESS`);
   }
 
   log("start", `Scheduler started (task tick: ${tickIntervalMs / 1000}s, registry check: ${registryCheckIntervalMs / 1000}s)`);
