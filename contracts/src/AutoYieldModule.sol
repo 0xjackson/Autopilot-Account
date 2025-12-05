@@ -348,7 +348,7 @@ contract AutoYieldModule is IExecutorModule {
         bytes memory data
     ) internal {
         bytes memory executionCalldata = abi.encodePacked(target, value, data);
-        IKernel(account).execute(EXEC_MODE_DEFAULT, executionCalldata);
+        IKernel(account).executeFromExecutor(EXEC_MODE_DEFAULT, executionCalldata);
     }
 
     function _extractTransferAmount(bytes calldata data, address token) internal pure returns (uint256) {

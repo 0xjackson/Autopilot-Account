@@ -78,6 +78,18 @@ contract MockKernelForFactory is IKernel {
         require(success, "Execution failed");
     }
 
+    function executeFromExecutor(ExecMode, bytes calldata executionCalldata)
+        external payable override returns (bytes[] memory returnData)
+    {
+        address target = address(bytes20(executionCalldata[:20]));
+        uint256 value = uint256(bytes32(executionCalldata[20:52]));
+        bytes calldata data = executionCalldata[52:];
+        (bool success, bytes memory result) = target.call{value: value}(data);
+        require(success, "Execution failed");
+        returnData = new bytes[](1);
+        returnData[0] = result;
+    }
+
     function installModule(uint256 moduleTypeId, address module, bytes calldata initData) external override {
         installedModules[moduleTypeId][module] = true;
         moduleInitData[moduleTypeId][module] = initData;

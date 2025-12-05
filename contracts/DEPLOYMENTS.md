@@ -6,32 +6,42 @@ Last Updated: December 5, 2024
 
 ---
 
-## ⚠️ v4 TESTING IN PROGRESS
-
-v4 contracts are deployed but **NOT YET VALIDATED**. Do not switch production until testing confirms they work.
-
-### v4 Contracts (Direct ERC-4626 - TESTING)
+## v5 Contracts (CURRENT - executeFromExecutor fix)
 
 | Contract | Address | Description |
 |----------|---------|-------------|
 | **AutopilotFactory** | [`0xA5BC2a02C397F66fBCFC445457325F36106788d1`](https://basescan.org/address/0xA5BC2a02C397F66fBCFC445457325F36106788d1) | Factory v4 - direct vault integration |
-| **AutoYieldModule** | [`0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd`](https://basescan.org/address/0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd) | Module v4 - direct ERC-4626, no adapter |
+| **AutoYieldModule** | [`0x17a4F90C0042AaDE88aEC477b7277f35e315B4E5`](https://basescan.org/address/0x17a4F90C0042AaDE88aEC477b7277f35e315B4E5) | Module v5 - **executeFromExecutor fix** |
 | **AutomationValidator** | [`0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b`](https://basescan.org/address/0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b) | Reused from v3 |
 
-**v4 Changes:**
-- Removed adapter layer - module interacts directly with ERC-4626 vaults
-- Default threshold changed from 100 USDC to 1 USDC
-- Enables dynamic vault selection (can migrate between vaults)
+**v5 Fix:**
+- Changed `_executeOnKernel()` to use `executeFromExecutor()` instead of `execute()`
+- This allows the module to callback into Kernel without triggering root validator hooks
+- Fixes "ECDSAValidator: sender is not owner" / "NotInitialized()" errors in UserOp submissions
 
-**v4 Quick Copy-Paste (FOR TESTING ONLY):**
+**v5 Quick Copy-Paste:**
 ```typescript
-export const CONTRACTS_V4 = {
+export const CONTRACTS = {
   FACTORY: "0xA5BC2a02C397F66fBCFC445457325F36106788d1",
-  MODULE: "0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd",
+  MODULE: "0x17a4F90C0042AaDE88aEC477b7277f35e315B4E5",
   VALIDATOR: "0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b",
   USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 } as const;
 ```
+
+---
+
+## ⚠️ v4 (DEPRECATED - has executeFromExecutor bug)
+
+### v4 Contracts (Direct ERC-4626 - DEPRECATED)
+
+| Contract | Address | Description |
+|----------|---------|-------------|
+| **AutopilotFactory** | [`0xA5BC2a02C397F66fBCFC445457325F36106788d1`](https://basescan.org/address/0xA5BC2a02C397F66fBCFC445457325F36106788d1) | Factory v4 - direct vault integration |
+| **AutoYieldModule** | [`0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd`](https://basescan.org/address/0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd) | Module v4 - **BUGGY, DO NOT USE** |
+| **AutomationValidator** | [`0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b`](https://basescan.org/address/0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b) | Reused from v3 |
+
+**v4 Bug:** Module used `execute()` instead of `executeFromExecutor()` when calling back into Kernel, triggering root validator hooks and causing UserOp failures.
 
 ---
 
@@ -81,7 +91,14 @@ AUTOMATION_PUBLIC_ADDRESS=0xD78F5099987389e33bD6Ec15FF3Ca4dBedD507f3
 
 ## Deployment History
 
-### v4 - December 5, 2024 (TESTING - NOT PRODUCTION)
+### v5 - December 5, 2024 (CURRENT)
+- **Critical fix:** Changed `_executeOnKernel()` to use `executeFromExecutor()` instead of `execute()`
+- Root cause: When module called back into Kernel via `execute()`, it triggered root validator hooks
+- This caused "ECDSAValidator: sender is not owner" errors during UserOp simulation
+- AutoYieldModule v5: `0x17a4F90C0042AaDE88aEC477b7277f35e315B4E5`
+- Reuses Factory and AutomationValidator from v4
+
+### v4 - December 5, 2024 (DEPRECATED - buggy)
 - Direct ERC-4626 vault integration (removed adapter layer)
 - Enables dynamic vault selection via `migrateStrategy(token, newVault)`
 - Default threshold: 1 USDC
