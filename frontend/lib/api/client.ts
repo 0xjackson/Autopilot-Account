@@ -141,6 +141,11 @@ export type ErrorResponse = {
   error: string;
 };
 
+export type RegisterWalletResponse = {
+  ok: boolean;
+  wallet: string;
+};
+
 // ============================================================================
 // Wallet Settings Types
 // ============================================================================
@@ -239,7 +244,7 @@ function unwrapServerError(error: unknown): never {
 // ============================================================================
 
 function createAxiosInstance(): AxiosInstance {
-  const baseURL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+  const baseURL = process.env.NEXT_PUBLIC_API_URL ?? "https://autopilot-account-production.up.railway.app";
   const timeout = parseInt(process.env.NEXT_PUBLIC_API_TIMEOUT_MS ?? "30000", 10);
 
   const instance = axios.create({
@@ -278,6 +283,7 @@ export interface AutopilotAPI {
   getWalletSummary(wallet: string, params?: GetWalletSummaryParams): Promise<WalletSummaryResponse>;
   getWalletSettings(wallet: string): Promise<WalletSettingsResponse>;
   saveWalletSettings(wallet: string, settings: WalletSettingsInput): Promise<WalletSettingsResponse>;
+  registerWallet(wallet: string, owner: string): Promise<RegisterWalletResponse>;
 }
 
 async function pay(request: PayRequest): Promise<PayResponse> {
@@ -363,6 +369,21 @@ async function saveWalletSettings(
   }
 }
 
+async function registerWallet(
+  wallet: string,
+  owner: string
+): Promise<RegisterWalletResponse> {
+  try {
+    const response = await axiosInstance.post<RegisterWalletResponse>(
+      "/register",
+      { wallet, owner }
+    );
+    return response.data;
+  } catch (error) {
+    unwrapServerError(error);
+  }
+}
+
 // ============================================================================
 // Exported API Object
 // ============================================================================
@@ -375,6 +396,53 @@ export const autopilotApi: AutopilotAPI = {
   getWalletSummary,
   getWalletSettings,
   saveWalletSettings,
+  registerWallet,
 };
+
+// ============================================================================
+// User Send Operations (UserOp-based flow)
+// ============================================================================
+
+export type PrepareSendParams = {
+  walletAddress: string;
+  recipient: string;
+  amount: string;
+  token?: string;
+};
+
+export type PrepareSendResponse = {
+  userOp: Record<string, unknown>;
+  userOpHash: string;
+};
+
+export type SubmitSignedParams = {
+  userOp: Record<string, unknown>;
+  signature: string;
+};
+
+export type SubmitSignedResponse = {
+  hash: string;
+  txHash: string;
+};
+
+// Prepare a send UserOp
+export async function prepareSend(params: PrepareSendParams): Promise<PrepareSendResponse> {
+  try {
+    const response = await axiosInstance.post<PrepareSendResponse>("/ops/prepare-send", params);
+    return response.data;
+  } catch (error) {
+    unwrapServerError(error);
+  }
+}
+
+// Submit a signed UserOp
+export async function submitSigned(params: SubmitSignedParams): Promise<SubmitSignedResponse> {
+  try {
+    const response = await axiosInstance.post<SubmitSignedResponse>("/ops/submit-signed", params);
+    return response.data;
+  } catch (error) {
+    unwrapServerError(error);
+  }
+}
 
 export default autopilotApi;

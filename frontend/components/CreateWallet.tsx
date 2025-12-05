@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CONTRACTS, FACTORY_ABI } from "@/lib/constants";
 import { saveWallet } from "@/lib/services/wallet";
+import { autopilotApi } from "@/lib/api/client";
 
 export function CreateWallet() {
   const { address: ownerAddress, isConnected, chainId } = useAccount();
@@ -78,6 +79,11 @@ export function CreateWallet() {
   useEffect(() => {
     if (isSuccess && hash && ownerAddress && predictedAddress && !hasRedirected) {
       saveWallet(predictedAddress as `0x${string}`, ownerAddress);
+
+      // Register with backend for scheduler monitoring
+      autopilotApi.registerWallet(predictedAddress as string, ownerAddress)
+        .catch((err) => console.error("Failed to register wallet with backend:", err));
+
       setHasRedirected(true);
       window.location.href = "/dashboard";
     }

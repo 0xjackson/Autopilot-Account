@@ -21,6 +21,17 @@ import {
   ErrorResponse,
   RiskTier,
   RebalanceTaskInput,
+  WalletSummaryResponse,
+  CurrentStrategyInfo,
+  WalletSettings,
+  WalletSettingsResponse,
+  WalletSettingsInput,
+  ValidationError,
+  ValidationErrorResponse,
+  DEFAULT_WALLET_SETTINGS,
+  ALLOWED_CONSOLIDATION_TOKENS,
+  ALLOWED_YIELD_STRATEGIES,
+  DustConsolidationToken,
 } from "./types";
 import {
   getDustTokens,
@@ -51,6 +62,9 @@ import {
   isValidWalletAddress,
   isValidTaskAction,
 } from "./scheduler";
+import { prepareUserSendOp, submitSignedUserOp } from "./bundler/submit";
+import { CONTRACTS } from "./bundler/constants";
+import type { Address } from "viem";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -80,6 +94,137 @@ export function getRegisteredWallets(): string[] {
  */
 export function getRegisteredWalletCount(): number {
   return walletRegistry.size;
+}
+
+// ============================================================================
+// Wallet Settings Storage (in-memory)
+// TODO: Replace with database (PostgreSQL) for persistence
+// ============================================================================
+
+interface StoredSettings {
+  settings: WalletSettings;
+  updatedAt: Date;
+}
+
+const settingsStore = new Map<string, StoredSettings>();
+
+/**
+ * Get settings for a wallet (returns defaults if not set)
+ */
+export function getWalletSettings(wallet: string): StoredSettings {
+  const stored = settingsStore.get(wallet.toLowerCase());
+  if (stored) {
+    return stored;
+  }
+  // Return defaults for wallets without stored settings
+  return {
+    settings: { ...DEFAULT_WALLET_SETTINGS },
+    updatedAt: new Date(),
+  };
+}
+
+/**
+ * Save settings for a wallet
+ */
+export function saveWalletSettings(wallet: string, settings: WalletSettings): StoredSettings {
+  const stored: StoredSettings = {
+    settings,
+    updatedAt: new Date(),
+  };
+  settingsStore.set(wallet.toLowerCase(), stored);
+  return stored;
+}
+
+/**
+ * Validate settings input and return validation errors
+ */
+function validateSettingsInput(input: WalletSettingsInput): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  // Validate checkingThreshold
+  if (input.checkingThreshold !== undefined) {
+    const threshold = parseFloat(input.checkingThreshold);
+    if (isNaN(threshold) || threshold < 0) {
+      errors.push({
+        field: "checkingThreshold",
+        message: "Checking threshold must be a non-negative number",
+      });
+    }
+  }
+
+  // Validate dustThreshold
+  if (input.dustThreshold !== undefined) {
+    const threshold = parseFloat(input.dustThreshold);
+    if (isNaN(threshold) || threshold < 0) {
+      errors.push({
+        field: "dustThreshold",
+        message: "Dust threshold must be a non-negative number",
+      });
+    }
+  }
+
+  // Validate riskTolerance
+  if (input.riskTolerance !== undefined) {
+    if (!Number.isInteger(input.riskTolerance) || input.riskTolerance < 1 || input.riskTolerance > 5) {
+      errors.push({
+        field: "riskTolerance",
+        message: "Risk tolerance must be an integer between 1 and 5",
+      });
+    }
+  }
+
+  // Validate dustConsolidationToken
+  if (input.dustConsolidationToken !== undefined) {
+    if (!ALLOWED_CONSOLIDATION_TOKENS.includes(input.dustConsolidationToken as DustConsolidationToken)) {
+      errors.push({
+        field: "dustConsolidationToken",
+        message: `Dust consolidation token must be one of: ${ALLOWED_CONSOLIDATION_TOKENS.join(", ")}`,
+      });
+    }
+  }
+
+  // Validate yieldStrategy
+  if (input.yieldStrategy !== undefined) {
+    if (!ALLOWED_YIELD_STRATEGIES.includes(input.yieldStrategy)) {
+      errors.push({
+        field: "yieldStrategy",
+        message: `Yield strategy must be one of: ${ALLOWED_YIELD_STRATEGIES.join(", ")}`,
+      });
+    }
+  }
+
+  // Validate autoYieldTokens structure
+  if (input.autoYieldTokens !== undefined) {
+    if (typeof input.autoYieldTokens !== "object") {
+      errors.push({
+        field: "autoYieldTokens",
+        message: "Auto yield tokens must be an object",
+      });
+    } else {
+      if (input.autoYieldTokens.USDC !== undefined && typeof input.autoYieldTokens.USDC.enabled !== "boolean") {
+        errors.push({
+          field: "autoYieldTokens.USDC.enabled",
+          message: "USDC enabled must be a boolean",
+        });
+      }
+      if (input.autoYieldTokens.WETH !== undefined && typeof input.autoYieldTokens.WETH.enabled !== "boolean") {
+        errors.push({
+          field: "autoYieldTokens.WETH.enabled",
+          message: "WETH enabled must be a boolean",
+        });
+      }
+    }
+  }
+
+  // Validate dustSweepEnabled
+  if (input.dustSweepEnabled !== undefined && typeof input.dustSweepEnabled !== "boolean") {
+    errors.push({
+      field: "dustSweepEnabled",
+      message: "Dust sweep enabled must be a boolean",
+    });
+  }
+
+  return errors;
 }
 
 // Middleware
@@ -180,6 +325,8 @@ app.get("/", (_req: Request, res: Response) => {
       "/register",
       "/wallets",
       "/wallet/:address",
+      "/wallet/:address/summary",
+      "/wallet/:address/settings",
       "/strategies",
       "/recommend",
       "/recommendations",
@@ -286,6 +433,174 @@ app.get("/wallet/:address", (req: Request, res: Response) => {
   }
 
   return res.json(wallet);
+});
+
+/**
+ * GET /wallet/:address/summary
+ * Get dashboard summary for a wallet including strategy info
+ *
+ * Query params:
+ *   - token: string (optional, default "USDC")
+ *   - chainId: number (optional, default 8453)
+ *
+ * Returns:
+ *   - wallet: string (smart wallet address)
+ *   - owner: string (if registered)
+ *   - isRegistered: boolean
+ *   - currentStrategy: strategy info with APY, protocol name
+ *   - metadata: data source info
+ */
+app.get("/wallet/:address/summary", async (req: Request, res: Response) => {
+  const address = req.params.address.toLowerCase();
+  const token = parseToken(req.query.token);
+  const chainId = parseChainId(req.query.chainId);
+
+  // Validate chainId
+  if (chainId === null) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid chainId parameter. Must be a positive integer.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  // Validate address format
+  if (!isValidWalletAddress(address)) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid wallet address format. Must be 0x followed by 40 hex characters.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  try {
+    // Check if wallet is registered
+    const registeredWallet = walletRegistry.get(address);
+    const isRegistered = !!registeredWallet;
+
+    // Get best strategy for this token/chain
+    const strategyResult = await getBestStrategy(token, chainId);
+
+    let currentStrategy: CurrentStrategyInfo | undefined;
+    if (strategyResult.strategy) {
+      const s = strategyResult.strategy;
+      currentStrategy = {
+        id: s.id,
+        protocol: s.protocolName,
+        name: s.id.includes("-") ? s.id.split("-").slice(0, -1).join(" ") : s.protocolName,
+        apy: s.apy,
+        vaultAddress: s.vaultAddress,
+        adapterAddress: s.adapterAddress,
+      };
+    }
+
+    const response: WalletSummaryResponse = {
+      wallet: address,
+      owner: registeredWallet?.owner,
+      chainId,
+      isRegistered,
+      currentStrategy,
+      fetchedAt: new Date().toISOString(),
+      metadata: strategyResult.metadata,
+    };
+
+    return res.json(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[/wallet/:address/summary] Error:`, message);
+    const errorResponse: ErrorResponse = {
+      error: `Failed to fetch wallet summary: ${message}`,
+    };
+    return res.status(500).json(errorResponse);
+  }
+});
+
+/**
+ * GET /wallet/:address/settings
+ * Get wallet settings (preferences for automation)
+ *
+ * Returns stored settings or defaults if none set
+ */
+app.get("/wallet/:address/settings", (req: Request, res: Response) => {
+  const address = req.params.address.toLowerCase();
+
+  // Validate address format
+  if (!isValidWalletAddress(address)) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid wallet address format. Must be 0x followed by 40 hex characters.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  const stored = getWalletSettings(address);
+
+  const response: WalletSettingsResponse = {
+    wallet: address,
+    settings: stored.settings,
+    updatedAt: stored.updatedAt.toISOString(),
+  };
+
+  console.log(`[settings] GET ${address}: returning settings`);
+  return res.json(response);
+});
+
+/**
+ * POST /wallet/:address/settings
+ * Update wallet settings
+ *
+ * Body: Partial<WalletSettings> - only include fields to update
+ *
+ * Returns:
+ *   - 200: Updated settings
+ *   - 400: Validation errors
+ */
+app.post("/wallet/:address/settings", (req: Request, res: Response) => {
+  const address = req.params.address.toLowerCase();
+  const input = req.body as WalletSettingsInput;
+
+  // Validate address format
+  if (!isValidWalletAddress(address)) {
+    const errorResponse: ErrorResponse = {
+      error: "Invalid wallet address format. Must be 0x followed by 40 hex characters.",
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  // Validate input
+  const validationErrors = validateSettingsInput(input);
+  if (validationErrors.length > 0) {
+    const errorResponse: ValidationErrorResponse = {
+      error: "Validation failed",
+      validationErrors,
+    };
+    return res.status(400).json(errorResponse);
+  }
+
+  // Get current settings (or defaults)
+  const current = getWalletSettings(address);
+
+  // Merge input with current settings
+  const updatedSettings: WalletSettings = {
+    ...current.settings,
+    ...input,
+    // Deep merge autoYieldTokens if provided
+    autoYieldTokens: input.autoYieldTokens
+      ? {
+          USDC: input.autoYieldTokens.USDC ?? current.settings.autoYieldTokens.USDC,
+          WETH: input.autoYieldTokens.WETH ?? current.settings.autoYieldTokens.WETH,
+        }
+      : current.settings.autoYieldTokens,
+  };
+
+  // Save updated settings
+  const stored = saveWalletSettings(address, updatedSettings);
+
+  const response: WalletSettingsResponse = {
+    wallet: address,
+    settings: stored.settings,
+    updatedAt: stored.updatedAt.toISOString(),
+  };
+
+  console.log(`[settings] POST ${address}: settings updated`);
+  return res.json(response);
 });
 
 /**
@@ -965,6 +1280,79 @@ app.get("/admin/cache-status", (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// User Send Operations
+// ============================================================================
+
+/**
+ * POST /ops/prepare-send
+ * Prepare a send UserOp (returns unsigned UserOp + hash to sign)
+ *
+ * Body:
+ *   - walletAddress: string (required, smart wallet address)
+ *   - recipient: string (required, recipient address)
+ *   - amount: string (required, amount in smallest unit)
+ *   - token: string (optional, defaults to USDC)
+ */
+app.post("/ops/prepare-send", async (req: Request, res: Response) => {
+  try {
+    const { walletAddress, recipient, amount, token } = req.body;
+
+    if (!walletAddress || !recipient || !amount) {
+      const errorResponse: ErrorResponse = {
+        error: "Missing required fields: walletAddress, recipient, amount",
+      };
+      return res.status(400).json(errorResponse);
+    }
+
+    const result = await prepareUserSendOp(
+      walletAddress as Address,
+      recipient as Address,
+      BigInt(amount),
+      (token as Address) || CONTRACTS.USDC
+    );
+
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error("[/ops/prepare-send] Error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    const errorResponse: ErrorResponse = { error: message };
+    return res.status(500).json(errorResponse);
+  }
+});
+
+/**
+ * POST /ops/submit-signed
+ * Submit a signed UserOp
+ *
+ * Body:
+ *   - userOp: object (required, the UserOp from prepare-send)
+ *   - signature: string (required, the user's signature)
+ */
+app.post("/ops/submit-signed", async (req: Request, res: Response) => {
+  try {
+    const { userOp, signature } = req.body;
+
+    if (!userOp || !signature) {
+      const errorResponse: ErrorResponse = {
+        error: "Missing required fields: userOp, signature",
+      };
+      return res.status(400).json(errorResponse);
+    }
+
+    // Attach signature to UserOp
+    userOp.signature = signature;
+
+    const result = await submitSignedUserOp(userOp);
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error("[/ops/submit-signed] Error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    const errorResponse: ErrorResponse = { error: message };
+    return res.status(500).json(errorResponse);
+  }
+});
+
+// ============================================================================
 // Error handling
 // ============================================================================
 
@@ -1008,6 +1396,9 @@ app.listen(PORT, () => {
 ║    POST /register            - Register a new wallet      ║
 ║    GET  /wallets             - List registered wallets    ║
 ║    GET  /wallet/:address     - Get wallet details         ║
+║    GET  /wallet/:address/summary - Dashboard summary      ║
+║    GET  /wallet/:address/settings - Get wallet settings   ║
+║    POST /wallet/:address/settings - Update settings       ║
 ║  Scheduler (B3):                                          ║
 ║    GET  /rebalance-tasks     - List all tasks             ║
 ║    POST /rebalance-tasks     - Create a task              ║

@@ -1,29 +1,23 @@
 import { type Address } from "viem";
 
-// Deployed contract addresses on Base Mainnet (v2 - December 4, 2024)
+// Deployed contract addresses on Base Mainnet (v5 - December 5, 2024)
+// v5 fix: executeFromExecutor instead of execute for module callbacks
 export const CONTRACTS = {
   // AutopilotFactory - deploys smart wallets with AutoYieldModule pre-installed
-  FACTORY: (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ||
-    "0xcf10279BAA0d5407Dbb637517d23055A55E72923") as Address,
+  FACTORY: "0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94" as Address,
 
-  // AutoYieldModule - manages yield allocation for smart wallets
-  MODULE: (process.env.NEXT_PUBLIC_MODULE_ADDRESS ||
-    "0x71b5A4663A49FF02BE672Ea9560256D2268727B7") as Address,
+  // AutoYieldModule - manages yield allocation for smart wallets (direct ERC-4626)
+  MODULE: "0x598d23dC23095b128aBD4Dbab096d48f9e4b919B" as Address,
 
   // AutomationValidator - ERC-7579 validator for automation key signatures
-  VALIDATOR: (process.env.NEXT_PUBLIC_VALIDATOR_ADDRESS ||
-    "0xe29ed376a2780f653C14EEC203eD25094c0E772A") as Address,
-
-  // MorphoAdapter - default yield adapter
-  ADAPTER: (process.env.NEXT_PUBLIC_ADAPTER_ADDRESS ||
-    "0x42EFecD83447e5b90c5F706309FaC8f9615bd68F") as Address,
+  VALIDATOR: "0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b" as Address,
 
   // USDC on Base Mainnet
   USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
 } as const;
 
 // Backend API URL
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://autopilot-account-production.up.railway.app";
 
 // AutopilotFactory ABI - matches AutopilotFactory.sol
 export const FACTORY_ABI = [
@@ -73,7 +67,7 @@ export const FACTORY_ABI = [
     outputs: [{ name: "", type: "address" }],
     stateMutability: "view",
   },
-  // Default threshold constant (100 USDC)
+  // Default threshold constant (1 USDC in v4)
   {
     name: "DEFAULT_THRESHOLD",
     type: "function",
@@ -143,7 +137,7 @@ export const MODULE_ABI = [
     stateMutability: "view",
   },
   {
-    name: "currentAdapter",
+    name: "currentVault",
     type: "function",
     inputs: [
       { name: "account", type: "address" },
@@ -160,11 +154,11 @@ export const MODULE_ABI = [
     stateMutability: "view",
   },
   {
-    name: "allowedAdapters",
+    name: "allowedVaults",
     type: "function",
     inputs: [
       { name: "account", type: "address" },
-      { name: "adapter", type: "address" },
+      { name: "vault", type: "address" },
     ],
     outputs: [{ name: "", type: "bool" }],
     stateMutability: "view",
@@ -188,20 +182,20 @@ export const MODULE_ABI = [
     stateMutability: "nonpayable",
   },
   {
-    name: "setCurrentAdapter",
+    name: "setCurrentVault",
     type: "function",
     inputs: [
       { name: "token", type: "address" },
-      { name: "adapter", type: "address" },
+      { name: "vault", type: "address" },
     ],
     outputs: [],
     stateMutability: "nonpayable",
   },
   {
-    name: "setAdapterAllowed",
+    name: "setVaultAllowed",
     type: "function",
     inputs: [
-      { name: "adapter", type: "address" },
+      { name: "vault", type: "address" },
       { name: "allowed", type: "bool" },
     ],
     outputs: [],
@@ -240,7 +234,7 @@ export const MODULE_ABI = [
     type: "function",
     inputs: [
       { name: "token", type: "address" },
-      { name: "newAdapter", type: "address" },
+      { name: "newVault", type: "address" },
     ],
     outputs: [],
     stateMutability: "nonpayable",

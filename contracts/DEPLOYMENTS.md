@@ -2,15 +2,58 @@
 
 ## Base Mainnet (Chain ID: 8453)
 
-Last Updated: December 4, 2024
+Last Updated: December 5, 2024
+
+---
+
+## v5 Contracts (CURRENT - executeFromExecutor fix)
+
+| Contract | Address | Description |
+|----------|---------|-------------|
+| **AutopilotFactory** | [`0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94`](https://basescan.org/address/0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94) | Factory v5 - with fixed module |
+| **AutoYieldModule** | [`0x598d23dC23095b128aBD4Dbab096d48f9e4b919B`](https://basescan.org/address/0x598d23dC23095b128aBD4Dbab096d48f9e4b919B) | Module v5 - **executeFromExecutor fix** |
+| **AutomationValidator** | [`0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b`](https://basescan.org/address/0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b) | Reused from v3 |
+
+**v5 Fix:**
+- Changed `_executeOnKernel()` to use `executeFromExecutor()` instead of `execute()`
+- This allows the module to callback into Kernel without triggering root validator hooks
+- Fixes "ECDSAValidator: sender is not owner" / "NotInitialized()" errors in UserOp submissions
+
+**v5 Quick Copy-Paste:**
+```typescript
+export const CONTRACTS = {
+  FACTORY: "0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94",
+  MODULE: "0x598d23dC23095b128aBD4Dbab096d48f9e4b919B",
+  VALIDATOR: "0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b",
+  USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+} as const;
+```
+
+---
+
+## ⚠️ v4 (DEPRECATED - has executeFromExecutor bug)
+
+### v4 Contracts (Direct ERC-4626 - DEPRECATED)
+
+| Contract | Address | Description |
+|----------|---------|-------------|
+| **AutopilotFactory** | [`0xA5BC2a02C397F66fBCFC445457325F36106788d1`](https://basescan.org/address/0xA5BC2a02C397F66fBCFC445457325F36106788d1) | Factory v4 - direct vault integration |
+| **AutoYieldModule** | [`0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd`](https://basescan.org/address/0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd) | Module v4 - **BUGGY, DO NOT USE** |
+| **AutomationValidator** | [`0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b`](https://basescan.org/address/0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b) | Reused from v3 |
+
+**v4 Bug:** Module used `execute()` instead of `executeFromExecutor()` when calling back into Kernel, triggering root validator hooks and causing UserOp failures.
+
+---
+
+## v3 Contracts (CURRENT PRODUCTION)
 
 ### Core Contracts
 
 | Contract | Address | Description |
 |----------|---------|-------------|
-| **AutopilotFactory** | [`0xcf10279BAA0d5407Dbb637517d23055A55E72923`](https://basescan.org/address/0xcf10279BAA0d5407Dbb637517d23055A55E72923) | Factory for deploying Autopilot smart wallets |
+| **AutopilotFactory** | [`0xFBb91eb4234558b191c393985eF34282B551e81B`](https://basescan.org/address/0xFBb91eb4234558b191c393985eF34282B551e81B) | Factory for deploying Autopilot smart wallets |
 | **AutoYieldModule** | [`0x71b5A4663A49FF02BE672Ea9560256D2268727B7`](https://basescan.org/address/0x71b5A4663A49FF02BE672Ea9560256D2268727B7) | ERC-7579 executor module for auto-yield logic |
-| **AutomationValidator** | [`0xe29ed376a2780f653C14EEC203eD25094c0E772A`](https://basescan.org/address/0xe29ed376a2780f653C14EEC203eD25094c0E772A) | ERC-7579 validator for automation key signatures |
+| **AutomationValidator** | [`0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b`](https://basescan.org/address/0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b) | ERC-7579 validator for automation key signatures |
 | **MorphoAdapter** | [`0x42EFecD83447e5b90c5F706309FaC8f9615bd68F`](https://basescan.org/address/0x42EFecD83447e5b90c5F706309FaC8f9615bd68F) | Adapter for Moonwell Flagship USDC vault |
 
 ### Configuration
@@ -29,13 +72,13 @@ Last Updated: December 4, 2024
 
 ---
 
-## Quick Copy-Paste
+## Quick Copy-Paste (v3 Production)
 
 ```typescript
 export const CONTRACTS = {
-  FACTORY: "0xcf10279BAA0d5407Dbb637517d23055A55E72923",
+  FACTORY: "0xFBb91eb4234558b191c393985eF34282B551e81B",
   MODULE: "0x71b5A4663A49FF02BE672Ea9560256D2268727B7",
-  VALIDATOR: "0xe29ed376a2780f653C14EEC203eD25094c0E772A",
+  VALIDATOR: "0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b",
   ADAPTER: "0x42EFecD83447e5b90c5F706309FaC8f9615bd68F",
   USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 } as const;
@@ -48,10 +91,32 @@ AUTOMATION_PUBLIC_ADDRESS=0xD78F5099987389e33bD6Ec15FF3Ca4dBedD507f3
 
 ## Deployment History
 
-### v2 - December 4, 2024
+### v5 - December 5, 2024 (CURRENT)
+- **Critical fix:** Changed `_executeOnKernel()` to use `executeFromExecutor()` instead of `execute()`
+- Root cause: When module called back into Kernel via `execute()`, it triggered root validator hooks
+- This caused "ECDSAValidator: sender is not owner" errors during UserOp simulation
+- AutoYieldModule v5: `0x598d23dC23095b128aBD4Dbab096d48f9e4b919B`
+- AutopilotFactory v5: `0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94`
+- Reuses AutomationValidator from v3
+
+### v4 - December 5, 2024 (DEPRECATED - buggy)
+- Direct ERC-4626 vault integration (removed adapter layer)
+- Enables dynamic vault selection via `migrateStrategy(token, newVault)`
+- Default threshold: 1 USDC
+- AutoYieldModule: `0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd`
+- AutopilotFactory: `0xA5BC2a02C397F66fBCFC445457325F36106788d1`
+- Reuses AutomationValidator from v3
+
+### v3 - December 4, 2024 (CURRENT PRODUCTION)
+- Fixed AutomationValidator to parse ERC-7579 execute(bytes32,bytes) format
+- Redeployed Factory with new validator address
+- All contracts verified on Basescan
+
+### v2 - December 4, 2024 (Deprecated)
 - Fixed Kernel v3 module install data format (executor + validator)
 - Added AutomationValidator for session key UserOp signing
-- All contracts verified on Basescan
+- AutopilotFactory: `0xcf10279BAA0d5407Dbb637517d23055A55E72923`
+- AutomationValidator: `0xe29ed376a2780f653C14EEC203eD25094c0E772A`
 
 ### v1 - December 3, 2024 (Deprecated)
 - Initial deployment

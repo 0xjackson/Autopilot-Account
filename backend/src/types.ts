@@ -352,3 +352,147 @@ export type DustSummaryResponse = {
   totalDustValueUsd?: number;
   note: string;
 };
+
+// ============================================================================
+// Wallet Summary (Dashboard)
+// ============================================================================
+
+/**
+ * Current strategy info for a wallet
+ */
+export type CurrentStrategyInfo = {
+  /** Strategy ID (e.g., "morpho-usdc-base") */
+  id: string;
+  /** Protocol name (e.g., "Morpho", "Aave") */
+  protocol: string;
+  /** Strategy name (e.g., "Steakhouse USDC") */
+  name: string;
+  /** Current APY as decimal (e.g., 0.0567 = 5.67%) */
+  apy: number;
+  /** Vault address */
+  vaultAddress: string;
+  /** Adapter address */
+  adapterAddress?: string;
+};
+
+/**
+ * Response for GET /wallet/:address/summary endpoint
+ * Provides dashboard data for a wallet including strategy info
+ */
+export type WalletSummaryResponse = {
+  /** Smart wallet address */
+  wallet: string;
+  /** Owner EOA address (if registered) */
+  owner?: string;
+  /** Chain ID */
+  chainId: number;
+  /** Whether the wallet is registered for automation */
+  isRegistered: boolean;
+  /** Current strategy info (if yield is active) */
+  currentStrategy?: CurrentStrategyInfo;
+  /** Timestamp when data was fetched */
+  fetchedAt: string;
+  /** Data source/freshness info */
+  metadata: StrategyMetadata;
+};
+
+// ============================================================================
+// Wallet Settings
+// ============================================================================
+
+/**
+ * Token-specific yield configuration
+ */
+export type TokenYieldConfig = {
+  enabled: boolean;
+};
+
+/**
+ * Auto-yield token configuration for supported tokens
+ */
+export type AutoYieldTokens = {
+  USDC: TokenYieldConfig;
+  WETH: TokenYieldConfig;
+};
+
+/**
+ * Allowed consolidation tokens for dust sweep
+ */
+export type DustConsolidationToken = "USDC" | "WETH" | "ETH";
+
+/**
+ * Allowed yield strategy identifiers
+ */
+export type YieldStrategyId = "aerodrome" | "beefy" | "mock" | "morpho";
+
+/**
+ * Wallet settings - user preferences for automation
+ */
+export type WalletSettings = {
+  /** Minimum USDC to keep in checking (as string for precision) */
+  checkingThreshold: string;
+  /** Per-token yield enablement */
+  autoYieldTokens: AutoYieldTokens;
+  /** Token to consolidate dust into */
+  dustConsolidationToken: DustConsolidationToken;
+  /** Whether dust sweep is enabled */
+  dustSweepEnabled: boolean;
+  /** Minimum USD value to consider as dust (as string for precision) */
+  dustThreshold: string;
+  /** Risk tolerance 1-5 (1=very low, 5=very high) */
+  riskTolerance: number;
+  /** Selected yield strategy identifier */
+  yieldStrategy: YieldStrategyId | string;
+};
+
+/**
+ * Default settings for new wallets
+ */
+export const DEFAULT_WALLET_SETTINGS: WalletSettings = {
+  checkingThreshold: "100",
+  autoYieldTokens: {
+    USDC: { enabled: true },
+    WETH: { enabled: false },
+  },
+  dustConsolidationToken: "USDC",
+  dustSweepEnabled: true,
+  dustThreshold: "1.00",
+  riskTolerance: 3,
+  yieldStrategy: "morpho",
+};
+
+/**
+ * Allowed values for validation
+ */
+export const ALLOWED_CONSOLIDATION_TOKENS: DustConsolidationToken[] = ["USDC", "WETH", "ETH"];
+export const ALLOWED_YIELD_STRATEGIES: string[] = ["aerodrome", "beefy", "mock", "morpho"];
+
+/**
+ * Response for GET /wallet/:address/settings
+ */
+export type WalletSettingsResponse = {
+  wallet: string;
+  settings: WalletSettings;
+  updatedAt?: string;
+};
+
+/**
+ * Request body for POST /wallet/:address/settings
+ */
+export type WalletSettingsInput = Partial<WalletSettings>;
+
+/**
+ * Validation error detail
+ */
+export type ValidationError = {
+  field: string;
+  message: string;
+};
+
+/**
+ * Response for validation errors
+ */
+export type ValidationErrorResponse = {
+  error: string;
+  validationErrors: ValidationError[];
+};

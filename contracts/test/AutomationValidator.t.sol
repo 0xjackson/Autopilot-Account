@@ -33,7 +33,7 @@ contract AutomationValidatorTest is Test {
     // Selectors
     bytes4 public constant SELECTOR_REBALANCE = 0x21c28191; // rebalance(address)
     bytes4 public constant SELECTOR_MIGRATE = 0x6cb56d19; // migrateStrategy(address,address)
-    bytes4 public constant SELECTOR_EXECUTE = 0xb61d27f6; // execute(address,uint256,bytes)
+    bytes4 public constant SELECTOR_EXECUTE = 0xe9ae5c53; // execute(bytes32,bytes) - Kernel v3 ERC-7579
 
     function setUp() public {
         // Derive automation key from private key
@@ -245,12 +245,18 @@ contract AutomationValidatorTest is Test {
         // Build inner call data (e.g., rebalance(address token))
         bytes memory innerData = abi.encodeWithSelector(innerSelector, address(0x123));
 
-        // Build Kernel execute(to, value, data) calldata
+        // Build ERC-7579 executionCalldata: abi.encodePacked(target, value, innerData)
+        bytes memory executionCalldata = abi.encodePacked(
+            target,
+            uint256(0),
+            innerData
+        );
+
+        // Build Kernel v3 execute(bytes32 mode, bytes executionCalldata) calldata
         bytes memory executeData = abi.encodeWithSelector(
             SELECTOR_EXECUTE,
-            target,      // to
-            uint256(0),  // value
-            innerData    // data
+            bytes32(0),         // mode (default single call)
+            executionCalldata   // packed execution data
         );
 
         return PackedUserOperation({
@@ -309,17 +315,23 @@ contract AutomationValidatorIntegrationTest is Test {
     }
 
     function test_fullFlow_automationCanCallRebalance() public {
-        // 1. Build UserOp
+        // 1. Build UserOp with ERC-7579 format
         bytes memory rebalanceCall = abi.encodeWithSelector(
             bytes4(0x21c28191), // rebalance(address)
             address(0x123)     // token
         );
 
-        bytes memory executeCall = abi.encodeWithSelector(
-            bytes4(0xb61d27f6), // execute(address,uint256,bytes)
+        // ERC-7579 executionCalldata: abi.encodePacked(target, value, data)
+        bytes memory executionCalldata = abi.encodePacked(
             address(module),
             uint256(0),
             rebalanceCall
+        );
+
+        bytes memory executeCall = abi.encodeWithSelector(
+            bytes4(0xe9ae5c53), // execute(bytes32,bytes) - Kernel v3
+            bytes32(0),
+            executionCalldata
         );
 
         PackedUserOperation memory userOp = PackedUserOperation({
@@ -362,11 +374,17 @@ contract AutomationValidatorIntegrationTest is Test {
             address(0x123)
         );
 
-        bytes memory executeCall = abi.encodeWithSelector(
-            bytes4(0xb61d27f6),
+        // ERC-7579 executionCalldata
+        bytes memory executionCalldata = abi.encodePacked(
             address(module),
             uint256(0),
             unauthorizedCall
+        );
+
+        bytes memory executeCall = abi.encodeWithSelector(
+            bytes4(0xe9ae5c53), // execute(bytes32,bytes) - Kernel v3
+            bytes32(0),
+            executionCalldata
         );
 
         PackedUserOperation memory userOp = PackedUserOperation({
