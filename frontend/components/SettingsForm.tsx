@@ -243,32 +243,6 @@ export function SettingsForm() {
         </Alert>
       )}
 
-      {/* Checking Threshold */}
-      <Card className="border-gray-200 shadow-sm bg-white">
-        <CardHeader>
-          <CardTitle className="text-lg text-gray-900">Checking Threshold</CardTitle>
-          <CardDescription>
-            Minimum USDC to keep in checking. Excess is auto-deposited to yield.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center space-x-3">
-            <span className="text-gray-500">$</span>
-            <input
-              type="number"
-              min="0"
-              step="10"
-              value={settings.checkingThreshold}
-              onChange={(e) =>
-                setSettings({ ...settings, checkingThreshold: e.target.value })
-              }
-              className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-900 w-32 focus:outline-none focus:border-[#4169E1] focus:ring-1 focus:ring-[#4169E1]"
-            />
-            <span className="text-gray-500">USDC</span>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Auto-Yield Token Toggles */}
       <Card className="border-gray-200 shadow-sm bg-white">
         <CardHeader>

@@ -59,7 +59,7 @@ export function HeroSection({
             {/* Subheading */}
             <p className="text-lg sm:text-xl text-gray-600 max-w-xl mx-auto lg:mx-0 leading-relaxed animate-fade-in-delay">
               A smart wallet that automatically puts your idle capital to work.
-              Set your spending balance, and watch the rest earn yield on autopilot.
+              Deposit funds, and watch them earn yield on autopilot.
             </p>
 
             {/* CTA Section */}

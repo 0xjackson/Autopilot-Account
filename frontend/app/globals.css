@@ -117,3 +117,9 @@ input[type="number"] {
 .animate-pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
 }
+
+/* Override OnchainKit ConnectWallet button text color */
+[data-testid="ockConnectWallet_Container"] button,
+[data-testid="ockConnectWallet_Container"] span {
+  color: white !important;
+}

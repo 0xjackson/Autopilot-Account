@@ -211,7 +211,7 @@ export default function LandingPage() {
             Powerful Features, Simple Experience
           </h2>
           <p className="text-gray-600 max-w-xl mx-auto">
-            Set your checking balance once. Everything else is automatic.
+            Deposit once. Everything else is automatic.
             No complex DeFi knowledge required.
           </p>
         </div>
@@ -239,31 +239,25 @@ export default function LandingPage() {
         <div className="max-w-5xl mx-auto px-4">
           <div className="text-center mb-16">
             <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-4">
-              Get Started in 3 Simple Steps
+              Get Started in 2 Simple Steps
             </h2>
             <p className="text-gray-600 max-w-xl mx-auto">
               From zero to earning yield in under a minute. No seed phrases, no complexity.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-3xl mx-auto">
             <StepCard
               number="1"
               title="Deposit USDC"
-              description="Send USDC to your new smart wallet address. Works with any exchange or wallet."
+              description="Send USDC to your new smart wallet address."
               detail="Your funds are secured by the same technology that protects billions in DeFi."
             />
             <StepCard
               number="2"
-              title="Set Your Threshold"
-              description="Choose how much to keep liquid for spending. The rest gets put to work."
-              detail="Need $500 for daily expenses? Set that as your threshold. Easy."
-            />
-            <StepCard
-              number="3"
               title="Sit Back & Earn"
-              description="Watch your idle capital generate yield automatically, 24/7."
-              detail="Spend anytime - funds are pulled from yield seamlessly in one transaction."
+              description="Watch your capital generate yield automatically, 24/7. 100% goes to work."
+              detail="Spend anytime - your automation key withdraws from yield seamlessly for you."
             />
           </div>
 
@@ -272,16 +266,64 @@ export default function LandingPage() {
             <h3 className="text-lg font-semibold text-center text-gray-900 mb-8">
               How Your Money Flows
             </h3>
-            <div className="flex flex-col md:flex-row items-center justify-center gap-4 md:gap-8">
-              <FlowBox label="Your Wallet" sublabel="Deposit USDC" color="gray" />
+
+            {/* Main Flow - 3 boxes */}
+            <div className="flex flex-col md:flex-row items-center justify-center gap-4 md:gap-6">
+              <FlowBox label="Deposit USDC" sublabel="To your wallet" color="gray" />
               <FlowArrow />
-              <FlowBox label="Checking" sublabel="Ready to spend" color="blue" />
+              <div className="flex flex-col items-center">
+                <FlowBox label="System Handles" sublabel="Secure automation" color="blue" />
+                <div className="hidden md:block text-[#4169E1] mt-2">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                  </svg>
+                </div>
+              </div>
               <FlowArrow />
-              <FlowBox label="Yield Pool" sublabel="Earning interest" color="green" />
+              <FlowBox label="Earning Yield" sublabel="In top vault" color="green" />
             </div>
+
+            {/* Detailed System Flow */}
+            <div className="mt-8 pt-6 border-t border-gray-100">
+              <p className="text-center text-xs text-gray-400 uppercase tracking-wide mb-4">Under the hood</p>
+              <div className="flex flex-col md:flex-row items-center justify-center gap-2 md:gap-3 flex-wrap">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-3 text-center w-[170px]">
+                  <p className="text-xs font-medium text-gray-700">Detect & Build</p>
+                  <p className="text-xs text-gray-500 mt-1">Cron detects idle balance, finds top vault, creates UserOp, signs with session key</p>
+                </div>
+                <div className="text-gray-300 rotate-90 md:rotate-0">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                  </svg>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-3 text-center w-[170px]">
+                  <p className="text-xs font-medium text-gray-700">Sponsor Gas</p>
+                  <p className="text-xs text-gray-500 mt-1">Paymaster signs to sponsor gas fees for the UserOp</p>
+                </div>
+                <div className="text-gray-300 rotate-90 md:rotate-0">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                  </svg>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-3 text-center w-[170px]">
+                  <p className="text-xs font-medium text-gray-700">Bundle & Submit</p>
+                  <p className="text-xs text-gray-500 mt-1">Sent to Pimlico bundler, submitted to EntryPoint</p>
+                </div>
+                <div className="text-gray-300 rotate-90 md:rotate-0">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                  </svg>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-3 text-center w-[170px]">
+                  <p className="text-xs font-medium text-gray-700">Validate & Execute</p>
+                  <p className="text-xs text-gray-500 mt-1">Automation validator verifies signature, executes deposit</p>
+                </div>
+              </div>
+            </div>
+
             <p className="text-center text-gray-500 text-sm mt-6">
-              When you spend more than your checking balance, funds are automatically pulled from yield.
-              All in one transaction, zero hassle.
+              You deposit once. Our system securely handles everything else - finding the best yield,
+              signing with your automation key, and executing gasless transactions.
             </p>
           </div>
         </div>

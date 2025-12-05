@@ -512,7 +512,7 @@ export default function DashboardPage() {
           <div className="pt-2">
             <p className="text-gray-500 text-sm">
               Send USDC to your smart wallet address above to get started.
-              Funds above your checking threshold will automatically be allocated to yield.
+              Funds will automatically be allocated to yield.
             </p>
           </div>
         </div>
