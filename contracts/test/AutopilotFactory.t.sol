@@ -5,9 +5,9 @@ import "forge-std/Test.sol";
 import {AutopilotFactory} from "../src/AutopilotFactory.sol";
 import {AutoYieldModule} from "../src/AutoYieldModule.sol";
 import {AutomationValidator} from "../src/AutomationValidator.sol";
-import {MockYieldVault} from "../src/mocks/MockYieldVault.sol";
+import {MockERC4626Vault} from "../src/mocks/MockERC4626Vault.sol";
 import {MockERC20} from "../src/mocks/MockERC20.sol";
-import {IKernel, IKernelFactory, IHook, ValidationId} from "../src/interfaces/IKernel.sol";
+import {IKernel, IKernelFactory, IHook, ValidationId, ExecMode} from "../src/interfaces/IKernel.sol";
 
 /**
  * @title MockKernelFactory
@@ -70,8 +70,11 @@ contract MockKernelForFactory is IKernel {
         }
     }
 
-    function execute(address to, uint256 value, bytes calldata data) external override {
-        (bool success,) = to.call{value: value}(data);
+    function execute(ExecMode, bytes calldata executionCalldata) external payable override {
+        address target = address(bytes20(executionCalldata[:20]));
+        uint256 value = uint256(bytes32(executionCalldata[20:52]));
+        bytes calldata data = executionCalldata[52:];
+        (bool success,) = target.call{value: value}(data);
         require(success, "Execution failed");
     }
 
@@ -146,7 +149,7 @@ contract AutopilotFactoryTest is Test {
     AutomationValidator public validator;
     MockKernelFactory public kernelFactory;
     MockECDSAValidator public ecdsaValidator;
-    MockYieldVault public vault;
+    MockERC4626Vault public vault;
     MockERC20 public usdc;
 
     address public owner = address(0x1);
@@ -156,17 +159,14 @@ contract AutopilotFactoryTest is Test {
     uint256 constant MODULE_TYPE_EXECUTOR = 2;
 
     function setUp() public {
-        // Deploy mocks
         usdc = new MockERC20("USD Coin", "USDC", 6);
-        vault = new MockYieldVault(address(usdc));
+        vault = new MockERC4626Vault(address(usdc));
         kernelFactory = new MockKernelFactory();
         ecdsaValidator = new MockECDSAValidator();
 
-        // Deploy real contracts
         module = new AutoYieldModule();
         validator = new AutomationValidator();
 
-        // Deploy factory
         factory = new AutopilotFactory(
             address(kernelFactory),
             address(ecdsaValidator),
@@ -182,9 +182,9 @@ contract AutopilotFactoryTest is Test {
         assertEq(factory.ecdsaValidator(), address(ecdsaValidator));
         assertEq(factory.autoYieldModule(), address(module));
         assertEq(factory.automationValidator(), address(validator));
-        assertEq(factory.defaultAdapter(), address(vault));
+        assertEq(factory.defaultVault(), address(vault));
         assertEq(factory.automationKey(), automationKey);
-        assertEq(factory.defaultThreshold(), 100e6);
+        assertEq(factory.defaultThreshold(), 1e6);
     }
 
     function test_createAccount() public {
@@ -221,16 +221,13 @@ contract AutopilotFactoryTest is Test {
 
         address account = factory.createAccountFor(owner, salt);
 
-        // Check AutoYieldModule is initialized for this account
         assertTrue(module.isInitialized(account), "Module should be initialized");
         assertEq(module.automationKey(account), automationKey, "Automation key should be set");
-        assertEq(module.checkingThreshold(account, address(usdc)), 100e6, "Threshold should be set");
+        assertEq(module.checkingThreshold(account, address(usdc)), 1e6, "Threshold should be set");
 
-        // Check AutomationValidator is initialized for this account
         assertTrue(validator.initialized(account), "Validator should be initialized");
         assertEq(validator.automationKey(account), automationKey, "Validator automation key should be set");
 
-        // Check allowed selectors
         bytes4 rebalanceSelector = 0x21c28191;
         bytes4 migrateSelector = 0x6cb56d19;
         assertTrue(
@@ -263,16 +260,13 @@ contract AutopilotFactoryTest is Test {
     }
 
     function test_adminFunctions() public {
-        // Test setDefaultAdapter
-        address newAdapter = address(0x999);
-        factory.setDefaultAdapter(newAdapter);
-        assertEq(factory.defaultAdapter(), newAdapter);
+        address newVault = address(0x999);
+        factory.setDefaultVault(newVault);
+        assertEq(factory.defaultVault(), newVault);
 
-        // Test setDefaultThreshold
         factory.setDefaultThreshold(200e6);
         assertEq(factory.defaultThreshold(), 200e6);
 
-        // Test setAutomationKey
         address newKey = address(0x888);
         factory.setAutomationKey(newKey);
         assertEq(factory.automationKey(), newKey);
@@ -283,7 +277,7 @@ contract AutopilotFactoryTest is Test {
 
         vm.prank(notAdmin);
         vm.expectRevert("Not admin");
-        factory.setDefaultAdapter(address(0x1));
+        factory.setDefaultVault(address(0x1));
 
         vm.prank(notAdmin);
         vm.expectRevert("Not admin");
@@ -307,7 +301,7 @@ contract FullFlowIntegrationTest is Test {
     AutomationValidator public validator;
     MockKernelFactory public kernelFactory;
     MockECDSAValidator public ecdsaValidator;
-    MockYieldVault public vault;
+    MockERC4626Vault public vault;
     MockERC20 public usdc;
 
     uint256 public automationPrivateKey = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
@@ -317,17 +311,14 @@ contract FullFlowIntegrationTest is Test {
     function setUp() public {
         automationKey = vm.addr(automationPrivateKey);
 
-        // Deploy mocks
         usdc = new MockERC20("USD Coin", "USDC", 6);
-        vault = new MockYieldVault(address(usdc));
+        vault = new MockERC4626Vault(address(usdc));
         kernelFactory = new MockKernelFactory();
         ecdsaValidator = new MockECDSAValidator();
 
-        // Deploy real contracts
         module = new AutoYieldModule();
         validator = new AutomationValidator();
 
-        // Deploy factory
         factory = new AutopilotFactory(
             address(kernelFactory),
             address(ecdsaValidator),

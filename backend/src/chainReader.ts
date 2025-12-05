@@ -7,7 +7,7 @@ import { base } from "viem/chains";
 
 const CONTRACTS = {
   USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
-  AUTO_YIELD_MODULE: "0x71b5A4663A49FF02BE672Ea9560256D2268727B7" as Address,
+  AUTO_YIELD_MODULE: "0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd" as Address,
 };
 
 const ERC20_ABI = parseAbi([
@@ -17,7 +17,7 @@ const ERC20_ABI = parseAbi([
 const AUTO_YIELD_MODULE_ABI = parseAbi([
   "function checkingThreshold(address account, address token) view returns (uint256)",
   "function getYieldBalance(address account, address token) view returns (uint256)",
-  "function currentAdapter(address account, address token) view returns (address)",
+  "function currentVault(address account, address token) view returns (address)",
 ]);
 
 export interface WalletCheckResult {
@@ -27,7 +27,8 @@ export interface WalletCheckResult {
   yieldBalance: bigint;
   needsRebalance: boolean;
   surplus: bigint;
-  hasAdapter: boolean;
+  hasVault: boolean;
+  currentVault: Address | null;
 }
 
 export interface ChainReaderConfig {
@@ -65,7 +66,7 @@ export async function checkWalletsForRebalance(
   const contracts = walletAddresses.flatMap((wallet) => [
     { address: CONTRACTS.USDC, abi: ERC20_ABI, functionName: "balanceOf" as const, args: [wallet] },
     { address: CONTRACTS.AUTO_YIELD_MODULE, abi: AUTO_YIELD_MODULE_ABI, functionName: "checkingThreshold" as const, args: [wallet, CONTRACTS.USDC] },
-    { address: CONTRACTS.AUTO_YIELD_MODULE, abi: AUTO_YIELD_MODULE_ABI, functionName: "currentAdapter" as const, args: [wallet, CONTRACTS.USDC] },
+    { address: CONTRACTS.AUTO_YIELD_MODULE, abi: AUTO_YIELD_MODULE_ABI, functionName: "currentVault" as const, args: [wallet, CONTRACTS.USDC] },
     { address: CONTRACTS.AUTO_YIELD_MODULE, abi: AUTO_YIELD_MODULE_ABI, functionName: "getYieldBalance" as const, args: [wallet, CONTRACTS.USDC] },
   ]);
 
@@ -79,17 +80,17 @@ export async function checkWalletsForRebalance(
 
     const balanceResult = results[baseIndex];
     const thresholdResult = results[baseIndex + 1];
-    const adapterResult = results[baseIndex + 2];
+    const vaultResult = results[baseIndex + 2];
     const yieldBalanceResult = results[baseIndex + 3];
 
     const checkingBalance = balanceResult.status === "success" ? (balanceResult.result as bigint) : 0n;
     const threshold = thresholdResult.status === "success" ? (thresholdResult.result as bigint) : 0n;
-    const adapter = adapterResult.status === "success" ? (adapterResult.result as Address) : null;
+    const vault = vaultResult.status === "success" ? (vaultResult.result as Address) : null;
     const yieldBalance = yieldBalanceResult.status === "success" ? (yieldBalanceResult.result as bigint) : 0n;
 
-    const hasAdapter = adapter !== null && adapter !== "0x0000000000000000000000000000000000000000";
+    const hasVault = vault !== null && vault !== "0x0000000000000000000000000000000000000000";
     const surplus = checkingBalance > threshold ? checkingBalance - threshold : 0n;
-    const needsRebalance = surplus > 0n && hasAdapter;
+    const needsRebalance = surplus > 0n && hasVault;
 
     walletResults.push({
       wallet,
@@ -98,7 +99,8 @@ export async function checkWalletsForRebalance(
       yieldBalance,
       needsRebalance,
       surplus,
-      hasAdapter,
+      hasVault,
+      currentVault: hasVault ? vault : null,
     });
   }
 

@@ -26,7 +26,7 @@ contract AutopilotFactory {
     error AccountAlreadyExists();
 
     event AccountCreated(address indexed account, address indexed owner, bytes32 salt);
-    event DefaultsUpdated(address adapter, uint256 threshold);
+    event DefaultsUpdated(address vault, uint256 threshold);
 
     uint256 private constant EXECUTOR_MODULE_TYPE = MODULE_TYPE_EXECUTOR;
     uint256 private constant VALIDATOR_MODULE_TYPE = MODULE_TYPE_VALIDATOR;
@@ -35,7 +35,7 @@ contract AutopilotFactory {
     bytes4 private constant SELECTOR_MIGRATE = 0x6cb56d19;
     bytes4 private constant SELECTOR_EXECUTE = 0xe9ae5c53;
 
-    uint256 public constant DEFAULT_THRESHOLD = 100e6;
+    uint256 public constant DEFAULT_THRESHOLD = 1e6;
 
     IKernelFactory public immutable kernelFactory;
     address public immutable ecdsaValidator;
@@ -43,7 +43,7 @@ contract AutopilotFactory {
     address public immutable automationValidator;
 
     address public automationKey;
-    address public defaultAdapter;
+    address public defaultVault;
     uint256 public defaultThreshold;
     address public admin;
 
@@ -55,7 +55,7 @@ contract AutopilotFactory {
      * @param _ecdsaValidator ECDSA validator module address
      * @param _autoYieldModule AutoYieldModule implementation address
      * @param _automationValidator AutomationValidator implementation address
-     * @param _defaultAdapter Default yield adapter address
+     * @param _defaultVault Default yield vault address
      * @param _automationKey Global automation key address
      */
     constructor(
@@ -63,20 +63,20 @@ contract AutopilotFactory {
         address _ecdsaValidator,
         address _autoYieldModule,
         address _automationValidator,
-        address _defaultAdapter,
+        address _defaultVault,
         address _automationKey
     ) {
         if (_kernelFactory == address(0)) revert ZeroAddress();
         if (_ecdsaValidator == address(0)) revert ZeroAddress();
         if (_autoYieldModule == address(0)) revert ZeroAddress();
         if (_automationValidator == address(0)) revert ZeroAddress();
-        if (_defaultAdapter == address(0)) revert ZeroAddress();
+        if (_defaultVault == address(0)) revert ZeroAddress();
 
         kernelFactory = IKernelFactory(_kernelFactory);
         ecdsaValidator = _ecdsaValidator;
         autoYieldModule = _autoYieldModule;
         automationValidator = _automationValidator;
-        defaultAdapter = _defaultAdapter;
+        defaultVault = _defaultVault;
         automationKey = _automationKey;
         defaultThreshold = DEFAULT_THRESHOLD;
         admin = msg.sender;
@@ -132,14 +132,14 @@ contract AutopilotFactory {
     }
 
     /**
-     * @notice Update default adapter for new wallets
-     * @param _adapter New default adapter address
+     * @notice Update default vault for new wallets
+     * @param _vault New default vault address
      */
-    function setDefaultAdapter(address _adapter) external {
+    function setDefaultVault(address _vault) external {
         require(msg.sender == admin, "Not admin");
-        if (_adapter == address(0)) revert ZeroAddress();
-        defaultAdapter = _adapter;
-        emit DefaultsUpdated(_adapter, defaultThreshold);
+        if (_vault == address(0)) revert ZeroAddress();
+        defaultVault = _vault;
+        emit DefaultsUpdated(_vault, defaultThreshold);
     }
 
     /**
@@ -149,7 +149,7 @@ contract AutopilotFactory {
     function setDefaultThreshold(uint256 _threshold) external {
         require(msg.sender == admin, "Not admin");
         defaultThreshold = _threshold;
-        emit DefaultsUpdated(defaultAdapter, _threshold);
+        emit DefaultsUpdated(defaultVault, _threshold);
     }
 
     /**
@@ -182,7 +182,7 @@ contract AutopilotFactory {
         IHook noHook = IHook(address(0));
         bytes memory hookData = "";
 
-        bytes memory executorOnInstallData = abi.encode(defaultAdapter, automationKey, defaultThreshold);
+        bytes memory executorOnInstallData = abi.encode(defaultVault, automationKey, defaultThreshold);
 
         bytes memory executorInstallData = abi.encodePacked(
             bytes20(address(0)),

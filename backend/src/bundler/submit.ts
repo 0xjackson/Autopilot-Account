@@ -148,13 +148,13 @@ export async function submitRebalanceUserOp(
 export async function submitMigrateStrategyUserOp(
   walletAddress: Address,
   tokenAddress: Address,
-  newAdapterAddress: Address
+  newVaultAddress: Address
 ): Promise<Hex> {
-  console.log(`[bundler] Migrate: ${walletAddress} -> ${newAdapterAddress}`);
+  console.log(`[bundler] Migrate: ${walletAddress} -> ${newVaultAddress}`);
   const moduleCallData = encodeFunctionData({
     abi: AUTO_YIELD_MODULE_ABI,
     functionName: "migrateStrategy",
-    args: [tokenAddress, newAdapterAddress],
+    args: [tokenAddress, newVaultAddress],
   });
   return submitAutomationUserOp(walletAddress, moduleCallData);
 }

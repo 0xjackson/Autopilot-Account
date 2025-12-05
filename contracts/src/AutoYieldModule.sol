@@ -2,9 +2,9 @@
 pragma solidity ^0.8.23;
 
 import {IModule, IExecutorModule, MODULE_TYPE_EXECUTOR} from "./interfaces/IERC7579Module.sol";
-import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
-import {IKernel} from "./interfaces/IKernel.sol";
+import {IKernel, ExecMode} from "./interfaces/IKernel.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 //     ___         __              _ __      __
@@ -21,21 +21,24 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * @title AutoYieldModule
  * @author Autopilot
  * @notice Automatically manages yield allocation for smart wallet balances
+ * @dev Interacts directly with ERC-4626 vaults for dynamic vault selection
  */
 contract AutoYieldModule is IExecutorModule {
     using SafeERC20 for IERC20;
 
+    ExecMode constant EXEC_MODE_DEFAULT = ExecMode.wrap(bytes32(0));
+
     error NotInitialized();
     error AlreadyInitialized();
-    error InvalidAdapter();
-    error AdapterNotAllowed();
+    error InvalidVault();
+    error VaultNotAllowed();
     error InsufficientBalance();
     error UnauthorizedCaller();
 
-    event Initialized(address indexed account, address indexed adapter);
+    event Initialized(address indexed account, address indexed vault);
     event ThresholdUpdated(address indexed account, address indexed token, uint256 threshold);
-    event AdapterUpdated(address indexed account, address indexed token, address adapter);
-    event AdapterAllowed(address indexed account, address indexed adapter, bool allowed);
+    event VaultUpdated(address indexed account, address indexed token, address vault);
+    event VaultAllowed(address indexed account, address indexed vault, bool allowed);
     event AutomationKeyUpdated(address indexed account, address indexed automationKey);
     event Deposited(address indexed account, address indexed token, uint256 amount);
     event Withdrawn(address indexed account, address indexed token, uint256 amount);
@@ -45,8 +48,8 @@ contract AutoYieldModule is IExecutorModule {
 
     mapping(address account => bool) public isInitialized;
     mapping(address account => mapping(address token => uint256)) public checkingThreshold;
-    mapping(address account => mapping(address token => address)) public currentAdapter;
-    mapping(address account => mapping(address adapter => bool)) public allowedAdapters;
+    mapping(address account => mapping(address token => address)) public currentVault;
+    mapping(address account => mapping(address vault => bool)) public allowedVaults;
     mapping(address account => address) public automationKey;
 
     modifier onlyAuthorized(address account) {
@@ -65,27 +68,27 @@ contract AutoYieldModule is IExecutorModule {
 
     /**
      * @notice Called when module is installed on an account
-     * @param data Encoded (defaultAdapter, automationKey, initialThreshold)
+     * @param data Encoded (defaultVault, automationKey, initialThreshold)
      */
     function onInstall(bytes calldata data) external override {
         address account = msg.sender;
         if (isInitialized[account]) revert AlreadyInitialized();
 
-        (address defaultAdapter, address _automationKey, uint256 initialThreshold) =
+        (address defaultVault, address _automationKey, uint256 initialThreshold) =
             abi.decode(data, (address, address, uint256));
 
-        if (defaultAdapter == address(0)) revert InvalidAdapter();
+        if (defaultVault == address(0)) revert InvalidVault();
 
         isInitialized[account] = true;
         automationKey[account] = _automationKey;
 
-        address usdc = IYieldAdapter(defaultAdapter).asset();
-        allowedAdapters[account][defaultAdapter] = true;
-        currentAdapter[account][usdc] = defaultAdapter;
-        checkingThreshold[account][usdc] = initialThreshold;
+        address asset = IERC4626(defaultVault).asset();
+        allowedVaults[account][defaultVault] = true;
+        currentVault[account][asset] = defaultVault;
+        checkingThreshold[account][asset] = initialThreshold;
 
-        emit Initialized(account, defaultAdapter);
-        emit AdapterAllowed(account, defaultAdapter, true);
+        emit Initialized(account, defaultVault);
+        emit VaultAllowed(account, defaultVault, true);
         emit AutomationKeyUpdated(account, _automationKey);
     }
 
@@ -125,29 +128,29 @@ contract AutoYieldModule is IExecutorModule {
         if (!isInitialized[account]) revert NotInitialized();
 
         uint256 threshold = checkingThreshold[account][token];
-        address adapter = currentAdapter[account][token];
+        address vault = currentVault[account][token];
 
         uint256 checking = IERC20(token).balanceOf(account);
         uint256 amountNeeded = _extractTransferAmount(data, token);
         uint256 required = amountNeeded + threshold;
 
-        if (checking < required && adapter != address(0)) {
+        if (checking < required && vault != address(0)) {
             uint256 deficit = required - checking;
-            uint256 yieldBalance = _getYieldBalance(account, adapter);
+            uint256 yieldBalance = _getYieldBalance(account, vault);
 
             if (yieldBalance > 0) {
                 uint256 toWithdraw = deficit > yieldBalance ? yieldBalance : deficit;
-                _withdrawFromYield(account, adapter, toWithdraw);
+                _withdrawFromYield(account, vault, toWithdraw);
                 emit Withdrawn(account, token, toWithdraw);
             }
         }
 
-        IKernel(account).execute(to, value, data);
+        _executeOnKernel(account, to, value, data);
 
         uint256 newChecking = IERC20(token).balanceOf(account);
-        if (newChecking > threshold && adapter != address(0)) {
+        if (newChecking > threshold && vault != address(0)) {
             uint256 surplus = newChecking - threshold;
-            _depositToYield(account, adapter, token, surplus);
+            _depositToYield(account, vault, token, surplus);
             emit Deposited(account, token, surplus);
         }
 
@@ -163,53 +166,54 @@ contract AutoYieldModule is IExecutorModule {
         if (!isInitialized[account]) revert NotInitialized();
 
         uint256 threshold = checkingThreshold[account][token];
-        address adapter = currentAdapter[account][token];
+        address vault = currentVault[account][token];
 
-        if (adapter == address(0)) return;
+        if (vault == address(0)) return;
 
         uint256 checking = IERC20(token).balanceOf(account);
 
         if (checking > threshold) {
             uint256 surplus = checking - threshold;
-            _depositToYield(account, adapter, token, surplus);
+            _depositToYield(account, vault, token, surplus);
             emit Rebalanced(account, token, surplus);
         }
     }
 
     /**
-     * @notice Migrate funds from current adapter to a new one
+     * @notice Migrate funds from current vault to a new one
      * @param token Token to migrate
-     * @param newAdapter Address of the new adapter
+     * @param newVault Address of the new vault
      */
     function migrateStrategy(
         address token,
-        address newAdapter
+        address newVault
     ) external onlyAuthorized(msg.sender) {
         address account = msg.sender;
         if (!isInitialized[account]) revert NotInitialized();
-        if (!allowedAdapters[account][newAdapter]) revert AdapterNotAllowed();
 
-        address oldAdapter = currentAdapter[account][token];
-        if (oldAdapter == newAdapter) return;
+        address oldVault = currentVault[account][token];
+        if (oldVault == newVault) return;
 
-        if (oldAdapter != address(0)) {
-            uint256 yieldBalance = _getYieldBalance(account, oldAdapter);
+        if (oldVault != address(0)) {
+            uint256 yieldBalance = _getYieldBalance(account, oldVault);
             if (yieldBalance > 0) {
-                _withdrawFromYield(account, oldAdapter, yieldBalance);
+                _withdrawFromYield(account, oldVault, yieldBalance);
             }
         }
+
+        allowedVaults[account][newVault] = true;
 
         uint256 threshold = checkingThreshold[account][token];
         uint256 checking = IERC20(token).balanceOf(account);
 
         if (checking > threshold) {
             uint256 toDeposit = checking - threshold;
-            _depositToYield(account, newAdapter, token, toDeposit);
+            _depositToYield(account, newVault, token, toDeposit);
         }
 
-        currentAdapter[account][token] = newAdapter;
+        currentVault[account][token] = newVault;
 
-        emit StrategyMigrated(account, token, oldAdapter, newAdapter);
+        emit StrategyMigrated(account, token, oldVault, newVault);
     }
 
     /**
@@ -218,12 +222,12 @@ contract AutoYieldModule is IExecutorModule {
      */
     function flushToChecking(address token) external onlyAccount(msg.sender) {
         address account = msg.sender;
-        address adapter = currentAdapter[account][token];
+        address vault = currentVault[account][token];
 
-        if (adapter != address(0)) {
-            uint256 yieldBalance = _getYieldBalance(account, adapter);
+        if (vault != address(0)) {
+            uint256 yieldBalance = _getYieldBalance(account, vault);
             if (yieldBalance > 0) {
-                _withdrawFromYield(account, adapter, yieldBalance);
+                _withdrawFromYield(account, vault, yieldBalance);
                 emit Withdrawn(account, token, yieldBalance);
             }
         }
@@ -240,26 +244,26 @@ contract AutoYieldModule is IExecutorModule {
     }
 
     /**
-     * @notice Set the current adapter for a token
+     * @notice Set the current vault for a token
      * @param token Token address
-     * @param adapter Adapter address
+     * @param vault Vault address
      */
-    function setCurrentAdapter(address token, address adapter) external onlyAccount(msg.sender) {
-        if (adapter != address(0) && !allowedAdapters[msg.sender][adapter]) {
-            revert AdapterNotAllowed();
+    function setCurrentVault(address token, address vault) external onlyAccount(msg.sender) {
+        if (vault != address(0) && !allowedVaults[msg.sender][vault]) {
+            revert VaultNotAllowed();
         }
-        currentAdapter[msg.sender][token] = adapter;
-        emit AdapterUpdated(msg.sender, token, adapter);
+        currentVault[msg.sender][token] = vault;
+        emit VaultUpdated(msg.sender, token, vault);
     }
 
     /**
-     * @notice Add or remove an adapter from the allowlist
-     * @param adapter Adapter address
+     * @notice Add or remove a vault from the allowlist
+     * @param vault Vault address
      * @param allowed Whether to allow or disallow
      */
-    function setAdapterAllowed(address adapter, bool allowed) external onlyAccount(msg.sender) {
-        allowedAdapters[msg.sender][adapter] = allowed;
-        emit AdapterAllowed(msg.sender, adapter, allowed);
+    function setVaultAllowed(address vault, bool allowed) external onlyAccount(msg.sender) {
+        allowedVaults[msg.sender][vault] = allowed;
+        emit VaultAllowed(msg.sender, vault, allowed);
     }
 
     /**
@@ -279,11 +283,11 @@ contract AutoYieldModule is IExecutorModule {
      */
     function getTotalBalance(address account, address token) external view returns (uint256) {
         uint256 checking = IERC20(token).balanceOf(account);
-        address adapter = currentAdapter[account][token];
+        address vault = currentVault[account][token];
 
-        if (adapter == address(0)) return checking;
+        if (vault == address(0)) return checking;
 
-        uint256 yield_ = _getYieldBalance(account, adapter);
+        uint256 yield_ = _getYieldBalance(account, vault);
         return checking + yield_;
     }
 
@@ -304,39 +308,47 @@ contract AutoYieldModule is IExecutorModule {
      * @return Yield balance
      */
     function getYieldBalance(address account, address token) external view returns (uint256) {
-        address adapter = currentAdapter[account][token];
-        if (adapter == address(0)) return 0;
-        return _getYieldBalance(account, adapter);
+        address vault = currentVault[account][token];
+        if (vault == address(0)) return 0;
+        return _getYieldBalance(account, vault);
     }
 
-    function _getYieldBalance(address account, address adapter) internal view returns (uint256) {
-        try IYieldAdapterExtended(adapter).totalValueOf(account) returns (uint256 value) {
-            return value;
-        } catch {
-            return 0;
-        }
+    function _getYieldBalance(address account, address vault) internal view returns (uint256) {
+        uint256 shares = IERC4626(vault).balanceOf(account);
+        if (shares == 0) return 0;
+        return IERC4626(vault).convertToAssets(shares);
     }
 
     function _depositToYield(
         address account,
-        address adapter,
+        address vault,
         address token,
         uint256 amount
     ) internal {
-        bytes memory approveData = abi.encodeCall(IERC20.approve, (adapter, amount));
-        IKernel(account).execute(token, 0, approveData);
+        bytes memory approveData = abi.encodeCall(IERC20.approve, (vault, amount));
+        _executeOnKernel(account, token, 0, approveData);
 
-        bytes memory depositData = abi.encodeCall(IYieldAdapter.deposit, (amount));
-        IKernel(account).execute(adapter, 0, depositData);
+        bytes memory depositData = abi.encodeCall(IERC4626.deposit, (amount, account));
+        _executeOnKernel(account, vault, 0, depositData);
     }
 
     function _withdrawFromYield(
         address account,
-        address adapter,
+        address vault,
         uint256 amount
     ) internal {
-        bytes memory withdrawData = abi.encodeCall(IYieldAdapter.withdraw, (amount));
-        IKernel(account).execute(adapter, 0, withdrawData);
+        bytes memory withdrawData = abi.encodeCall(IERC4626.withdraw, (amount, account, account));
+        _executeOnKernel(account, vault, 0, withdrawData);
+    }
+
+    function _executeOnKernel(
+        address account,
+        address target,
+        uint256 value,
+        bytes memory data
+    ) internal {
+        bytes memory executionCalldata = abi.encodePacked(target, value, data);
+        IKernel(account).execute(EXEC_MODE_DEFAULT, executionCalldata);
     }
 
     function _extractTransferAmount(bytes calldata data, address token) internal pure returns (uint256) {
@@ -349,8 +361,4 @@ contract AutoYieldModule is IExecutorModule {
         token;
         return 0;
     }
-}
-
-interface IYieldAdapterExtended {
-    function totalValueOf(address account) external view returns (uint256);
 }

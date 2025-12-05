@@ -47,6 +47,11 @@ library ValidatorLib {
 
 // ============ Kernel Interface ============
 
+/// @notice ExecMode is bytes32 encoding execution parameters
+/// Format: callType (1 byte) + execType (1 byte) + unused (4 bytes) + selector (4 bytes) + payload (22 bytes)
+/// Default single call mode: 0x00...00 (all zeros)
+type ExecMode is bytes32;
+
 interface IKernel {
     /**
      * @notice Initialize the Kernel account with a root validator
@@ -65,12 +70,11 @@ interface IKernel {
     ) external;
 
     /**
-     * @notice Execute a call from this account
-     * @param to Target address
-     * @param value ETH value
-     * @param data Calldata
+     * @notice Execute a call from this account (Kernel v3 / ERC-7579 format)
+     * @param mode Execution mode (use EXEC_MODE_DEFAULT for single calls)
+     * @param executionCalldata Encoded as: target (20 bytes) + value (32 bytes) + calldata
      */
-    function execute(address to, uint256 value, bytes calldata data) external;
+    function execute(ExecMode mode, bytes calldata executionCalldata) external payable;
 
     /**
      * @notice Install a module on the account

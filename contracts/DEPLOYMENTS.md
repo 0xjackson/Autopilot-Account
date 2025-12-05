@@ -2,7 +2,40 @@
 
 ## Base Mainnet (Chain ID: 8453)
 
-Last Updated: December 4, 2024
+Last Updated: December 5, 2024
+
+---
+
+## ⚠️ v4 TESTING IN PROGRESS
+
+v4 contracts are deployed but **NOT YET VALIDATED**. Do not switch production until testing confirms they work.
+
+### v4 Contracts (Direct ERC-4626 - TESTING)
+
+| Contract | Address | Description |
+|----------|---------|-------------|
+| **AutopilotFactory** | [`0xA5BC2a02C397F66fBCFC445457325F36106788d1`](https://basescan.org/address/0xA5BC2a02C397F66fBCFC445457325F36106788d1) | Factory v4 - direct vault integration |
+| **AutoYieldModule** | [`0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd`](https://basescan.org/address/0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd) | Module v4 - direct ERC-4626, no adapter |
+| **AutomationValidator** | [`0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b`](https://basescan.org/address/0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b) | Reused from v3 |
+
+**v4 Changes:**
+- Removed adapter layer - module interacts directly with ERC-4626 vaults
+- Default threshold changed from 100 USDC to 1 USDC
+- Enables dynamic vault selection (can migrate between vaults)
+
+**v4 Quick Copy-Paste (FOR TESTING ONLY):**
+```typescript
+export const CONTRACTS_V4 = {
+  FACTORY: "0xA5BC2a02C397F66fBCFC445457325F36106788d1",
+  MODULE: "0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd",
+  VALIDATOR: "0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b",
+  USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+} as const;
+```
+
+---
+
+## v3 Contracts (CURRENT PRODUCTION)
 
 ### Core Contracts
 
@@ -29,7 +62,7 @@ Last Updated: December 4, 2024
 
 ---
 
-## Quick Copy-Paste
+## Quick Copy-Paste (v3 Production)
 
 ```typescript
 export const CONTRACTS = {
@@ -48,7 +81,15 @@ AUTOMATION_PUBLIC_ADDRESS=0xD78F5099987389e33bD6Ec15FF3Ca4dBedD507f3
 
 ## Deployment History
 
-### v3 - December 4, 2024
+### v4 - December 5, 2024 (TESTING - NOT PRODUCTION)
+- Direct ERC-4626 vault integration (removed adapter layer)
+- Enables dynamic vault selection via `migrateStrategy(token, newVault)`
+- Default threshold: 1 USDC
+- AutoYieldModule: `0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd`
+- AutopilotFactory: `0xA5BC2a02C397F66fBCFC445457325F36106788d1`
+- Reuses AutomationValidator from v3
+
+### v3 - December 4, 2024 (CURRENT PRODUCTION)
 - Fixed AutomationValidator to parse ERC-7579 execute(bytes32,bytes) format
 - Redeployed Factory with new validator address
 - All contracts verified on Basescan

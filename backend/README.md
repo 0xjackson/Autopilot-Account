@@ -9,14 +9,13 @@ Uses **Pimlico** for ERC-4337 bundler and paymaster (gas sponsorship):
 - Pimlico verifying paymaster (`0x777777777777AeC03fd955926DbF81597e66834C`)
 - Gasless UserOp submission for automation tasks
 
-## Contract Addresses (Base Mainnet)
+## Contract Addresses (Base Mainnet - v4)
 
 | Contract | Address |
 |----------|---------|
-| AutopilotFactory | `0xF8013d73a9791056eCFA1C0D0f68B29D17424f51` |
+| AutopilotFactory | `0xA5BC2a02C397F66fBCFC445457325F36106788d1` |
 | AutomationValidator | `0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b` |
-| AutoYieldModule | `0x71b5A4663A49FF02BE672Ea9560256D2268727B7` |
-| MorphoAdapter | `0x42EFecD83447e5b90c5F706309FaC8f9615bd68F` |
+| AutoYieldModule | `0xdCB9c356310DdBD693fbA8bF5e271123808cF6dd` |
 
 ## Features
 

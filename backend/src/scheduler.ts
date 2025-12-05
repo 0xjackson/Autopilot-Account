@@ -329,11 +329,14 @@ async function checkRegistryWallets(): Promise<void> {
   const wallets = getRegisteredWallets();
   if (wallets.length === 0) return;
 
-  log("registry", `Checking ${wallets.length} registered wallet(s) for rebalance`);
+  log("registry", `Checking ${wallets.length} registered wallet(s) for rebalance/migration`);
 
   try {
     const results = await checkWalletsForRebalance(wallets);
     const needsRebalance = results.filter((r) => r.needsRebalance);
+
+    const bestStrategyResult = await getExecutableRecommendedStrategies("USDC", DEFAULTS.CHAIN_ID, DEFAULTS.RISK_TOLERANCE, 0);
+    const bestVault = bestStrategyResult.bestStrategy?.vaultAddress as Address | undefined;
 
     if (needsRebalance.length > 0) {
       log("registry", `Found ${needsRebalance.length} wallet(s) needing rebalance:`);
@@ -360,7 +363,40 @@ async function checkRegistryWallets(): Promise<void> {
           log("registry", `  [SIMULATION] Would submit rebalance userOp for ${shortWallet}`);
         }
       }
-    } else {
+    }
+
+    if (bestVault) {
+      const needsMigration = results.filter(
+        (r) => r.hasVault && r.currentVault && r.currentVault.toLowerCase() !== bestVault.toLowerCase()
+      );
+
+      if (needsMigration.length > 0) {
+        log("registry", `Found ${needsMigration.length} wallet(s) needing vault migration to ${bestVault.substring(0, 10)}...`);
+
+        for (const result of needsMigration) {
+          const shortWallet = `${result.wallet.substring(0, 6)}...${result.wallet.substring(38)}`;
+          log(
+            "registry",
+            `  ${shortWallet}: current vault ${result.currentVault?.substring(0, 10)}... -> ${bestVault.substring(0, 10)}...`
+          );
+
+          if (bundlerEnabled) {
+            try {
+              log("registry", `  Submitting migrate UserOp for ${shortWallet}...`);
+              const userOpHash = await submitMigrateStrategyUserOp(result.wallet as Address, USDC_ADDRESS, bestVault);
+              log("registry", `  UserOp submitted: ${userOpHash}`);
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              log("registry", `  ERROR submitting migration UserOp: ${errorMsg}`);
+            }
+          } else {
+            log("registry", `  [SIMULATION] Would submit migrate userOp for ${shortWallet}`);
+          }
+        }
+      }
+    }
+
+    if (needsRebalance.length === 0) {
       log("registry", `All ${wallets.length} wallet(s) balanced (no action needed)`);
     }
   } catch (error) {
