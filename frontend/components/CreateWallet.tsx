@@ -53,6 +53,11 @@ export function CreateWallet() {
   useEffect(() => {
     if (existingAccount && existingAccount !== "0x0000000000000000000000000000000000000000" && ownerAddress && !hasRedirected) {
       saveWallet(existingAccount as `0x${string}`, ownerAddress);
+
+      // Register with backend for scheduler monitoring
+      autopilotApi.registerWallet(existingAccount as string, ownerAddress)
+        .catch((err) => console.error("Failed to register wallet with backend:", err));
+
       setHasRedirected(true);
       window.location.href = "/dashboard";
     }
