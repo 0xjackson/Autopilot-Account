@@ -4,10 +4,11 @@
 
 import { createPublicClient, http, parseAbi, Address } from "viem";
 import { base } from "viem/chains";
+import { CONTRACTS as BUNDLER_CONTRACTS } from "./bundler/constants";
 
 const CONTRACTS = {
-  USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
-  AUTO_YIELD_MODULE: "0x598d23dC23095b128aBD4Dbab096d48f9e4b919B" as Address,
+  USDC: BUNDLER_CONTRACTS.USDC,
+  AUTO_YIELD_MODULE: BUNDLER_CONTRACTS.MODULE,
 };
 
 const ERC20_ABI = parseAbi([

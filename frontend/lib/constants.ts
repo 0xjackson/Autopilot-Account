@@ -1,13 +1,13 @@
 import { type Address } from "viem";
 
-// Deployed contract addresses on Base Mainnet (v5 - December 5, 2024)
-// v5 fix: executeFromExecutor instead of execute for module callbacks
+// Deployed contract addresses on Base Mainnet (v6 - December 5, 2024)
+// v6: Added sweepDustAndCompound functionality
 export const CONTRACTS = {
   // AutopilotFactory - deploys smart wallets with AutoYieldModule pre-installed
-  FACTORY: "0x7673F1EBF4eA4e4F2CCb9bf44dCdeF5a5Ba76B94" as Address,
+  FACTORY: "0x6fa5d5CA703e98213Fdd641061a0D739a79341F3" as Address,
 
   // AutoYieldModule - manages yield allocation for smart wallets (direct ERC-4626)
-  MODULE: "0x598d23dC23095b128aBD4Dbab096d48f9e4b919B" as Address,
+  MODULE: "0x2B1E677C05e2C525605264C81dC401AB9E069F6C" as Address,
 
   // AutomationValidator - ERC-7579 validator for automation key signatures
   VALIDATOR: "0x47A6b2f3bD564F9DeA17AcF8AbE73890c546900b" as Address,
